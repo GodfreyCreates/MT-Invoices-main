@@ -20,6 +20,7 @@ import { Input } from '../components/ui/Input';
 import { Label } from '../components/ui/Label';
 import { ApiError, apiRequest } from '../lib/api';
 import { authClient } from '../lib/auth-client';
+import { useBranding } from '../lib/branding';
 import { useUploadThing } from '../lib/uploadthing';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
@@ -360,6 +361,7 @@ export function SettingsPage() {
     isPending: isSessionPending,
     refetch: refetchSession,
   } = authClient.useSession();
+  const { refreshBranding } = useBranding();
   const [summary, setSummary] = useState<SettingsSummary | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionItem[]>([]);
@@ -387,7 +389,7 @@ export function SettingsPage() {
   } = useUploadThing('companyLogo', {
     onClientUploadComplete: async () => {
       setUploadProgress(100);
-      await loadSummary();
+      await Promise.all([loadSummary(), refreshBranding()]);
       toast.success('Logo updated successfully');
       window.setTimeout(() => {
         setUploadProgress(0);
@@ -569,7 +571,7 @@ export function SettingsPage() {
       await apiRequest('/api/settings/logo', {
         method: 'DELETE',
       });
-      await loadSummary();
+      await Promise.all([loadSummary(), refreshBranding()]);
       setUploadProgress(0);
       toast.success('Logo removed');
     } catch (error) {
@@ -620,10 +622,10 @@ export function SettingsPage() {
   const initials = getInitials(displayName, displayEmail);
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-slate-100 pb-32 sm:pb-10">
-      <AppHeader />
+    <div className="min-h-screen bg-slate-100 pb-32 sm:pb-10">
+      <AppHeader className="top-0 z-[70]" />
 
-      <main className="mx-auto max-w-6xl px-3 py-4 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+      <main className="mx-auto max-w-6xl overflow-x-clip px-3 py-4 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
         <div className="grid gap-4 sm:gap-6 xl:grid-cols-[1.08fr_0.92fr]">
           <SectionCard title="Your account" description="Core account and security details.">
             <div className="flex flex-col gap-4">

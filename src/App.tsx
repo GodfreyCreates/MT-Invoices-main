@@ -15,6 +15,7 @@ import { AuthPage } from './pages/AuthPage';
 import { UsersPage } from './pages/UsersPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { MobileNav } from './components/layout/MobileNav';
+import { BrandingProvider } from './lib/branding';
 
 const SettingsPage = lazy(() =>
   import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })),
@@ -30,7 +31,7 @@ function RouteLoadingState() {
 
 export default function App() {
   return (
-    <>
+    <BrandingProvider>
       <Toaster position="top-center" richColors />
       <BrowserRouter>
         <Routes>
@@ -58,6 +59,6 @@ export default function App() {
         </Routes>
         <MobileNav />
       </BrowserRouter>
-    </>
+    </BrandingProvider>
   );
 }

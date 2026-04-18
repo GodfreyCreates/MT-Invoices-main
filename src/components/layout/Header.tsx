@@ -32,6 +32,8 @@ type HeaderBrandProps = {
   title: string;
   subtitle?: React.ReactNode;
   className?: string;
+  logoSrc?: string;
+  logoAlt?: string;
 };
 
 type HeaderTitleProps = {
@@ -146,7 +148,7 @@ export function Header({ left, right, className, contentClassName, user, onSignO
   return (
     <header 
       className={cn(
-        'sticky top-0 z-50 w-full bg-white/80 backdrop-blur-xl border-b border-gray-200/80 shadow-[0_4px_20px_-10px_rgba(0,0,0,0.05)] transition-all duration-300', 
+        'sticky inset-x-0 top-0 z-[60] w-full shrink-0 border-b border-gray-200/80 bg-white/95 shadow-[0_4px_20px_-10px_rgba(0,0,0,0.05)] backdrop-blur-xl transition-all duration-300 supports-[backdrop-filter]:bg-white/80',
         className
       )}
     >
@@ -276,12 +278,38 @@ export function Header({ left, right, className, contentClassName, user, onSignO
   );
 }
 
-export function HeaderBrand({ title, subtitle, className }: HeaderBrandProps) {
+export function HeaderBrand({
+  title,
+  subtitle,
+  className,
+  logoSrc,
+  logoAlt,
+}: HeaderBrandProps) {
   return (
     <div className={cn('group flex min-w-0 items-center gap-3 md:gap-3.5', className)}>
-      <div className="relative flex w-10 h-10 sm:w-11 sm:h-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-700 text-white font-bold shadow-md ring-1 ring-white/10 transition-all duration-300 ease-out group-hover:shadow-lg group-hover:scale-105 group-hover:-rotate-2 overflow-hidden">
-        <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-500 ease-out" />
-        <span className="relative z-10 text-sm md:text-base tracking-wider drop-shadow-sm">MT</span>
+      <div
+        className={cn(
+          'relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl text-white font-bold shadow-md ring-1 transition-all duration-300 ease-out group-hover:shadow-lg group-hover:scale-105 group-hover:-rotate-2 sm:h-11 sm:w-11',
+          logoSrc
+            ? 'bg-white ring-slate-200'
+            : 'bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-700 ring-white/10',
+        )}
+      >
+        <div
+          className={cn(
+            'absolute inset-0 translate-y-full transition-transform duration-500 ease-out group-hover:translate-y-0',
+            logoSrc ? 'bg-slate-900/5' : 'bg-white/20',
+          )}
+        />
+        {logoSrc ? (
+          <img
+            src={logoSrc}
+            alt={logoAlt ?? `${title} logo`}
+            className="relative z-10 h-full w-full object-contain p-1"
+          />
+        ) : (
+          <span className="relative z-10 text-sm md:text-base tracking-wider drop-shadow-sm">MT</span>
+        )}
       </div>
       <HeaderTitle title={title} subtitle={subtitle} />
     </div>

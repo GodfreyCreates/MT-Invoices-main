@@ -524,6 +524,30 @@ async function startServer() {
     }
   });
 
+  app.get("/api/branding", async (_req, res) => {
+    try {
+      const [brandingProfile] = await db
+        .select({
+          logoUrl: authUsers.companyLogoUrl,
+        })
+        .from(authUsers)
+        .where(
+          and(
+            eq(authUsers.role, "admin"),
+            isNotNull(authUsers.companyLogoUrl),
+          ),
+        )
+        .orderBy(desc(authUsers.updatedAt), desc(authUsers.createdAt))
+        .limit(1);
+
+      res.json({
+        logoUrl: brandingProfile?.logoUrl ?? null,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "Failed to fetch branding");
+    }
+  });
+
   app.get("/api/settings/summary", async (req, res) => {
     const session = await getAuthenticatedSession(req, res);
     if (!session) {

@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { authClient } from '../../lib/auth-client';
+import { useBranding } from '../../lib/branding';
 import { Button } from '../ui/Button';
 import { Header, HeaderBrand } from './Header';
 
@@ -25,6 +26,7 @@ export function AppHeader({
 }: AppHeaderProps) {
   const navigate = useNavigate();
   const { data: session } = authClient.useSession();
+  const { resolvedLogoSrc } = useBranding();
 
   const handleSignOut = async () => {
     await authClient.signOut();
@@ -40,6 +42,8 @@ export function AppHeader({
         <HeaderBrand
           title="MT Legacy"
           subtitle={getWorkspaceSubtitle(session?.user?.role)}
+          logoSrc={resolvedLogoSrc}
+          logoAlt="MT Legacy logo"
         />
       }
       user={session?.user}
