@@ -41,6 +41,7 @@ function AppRoutes() {
   return (
     <>
       <Routes>
+        <Route path="/" element={<Navigate to="/auth" replace />} />
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/invite/:token" element={<AcceptInvitationPage />} />
         <Route path="/verify" element={<VerifyInvoice />} />
@@ -48,7 +49,7 @@ function AppRoutes() {
         <Route path="/print/invoices" element={<InvoicePrintPage />} />
 
         {/* Protected Routes */}
-        <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+        <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/users" element={<ProtectedRoute requireCompany={false}><UsersPage /></ProtectedRoute>} />
         <Route path="/companies" element={<ProtectedRoute requireCompany={false}><CompaniesPage /></ProtectedRoute>} />
         <Route path="/company/setup" element={<ProtectedRoute requireCompany={false}><CompanySetupPage /></ProtectedRoute>} />
@@ -66,7 +67,7 @@ function AppRoutes() {
         <Route path="/invoices" element={<ProtectedRoute><Invoices /></ProtectedRoute>} />
         <Route path="/invoice/:id/preview" element={<ProtectedRoute><InvoicePreviewPage /></ProtectedRoute>} />
 
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/auth" replace />} />
       </Routes>
       {!isPrintRoute ? <MobileNav /> : null}
     </>

@@ -165,7 +165,7 @@ export function AcceptInvitationPage() {
           }
 
           await signInAcceptedUser(details.email, acceptedPasswordRef.current);
-          navigate('/', { replace: true });
+          navigate('/dashboard', { replace: true });
         } catch (signInError) {
           const message =
             signInError instanceof Error

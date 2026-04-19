@@ -52,7 +52,7 @@ export function ProtectedRoute({
   }
 
   if (!requireCompany && location.pathname === '/company/setup' && workspace.companies.length > 0) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/dashboard" replace />;
   }
 
   if (requireCompany && workspace.companies.length === 0) {

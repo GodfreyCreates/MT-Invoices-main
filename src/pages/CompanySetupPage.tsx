@@ -19,7 +19,7 @@ export function CompanySetupPage() {
 
   const redirectTarget = useMemo(() => {
     const from = (location.state as { from?: string } | null)?.from;
-    return from && from !== '/company/setup' ? from : '/';
+    return from && from !== '/company/setup' ? from : '/dashboard';
   }, [location.state]);
 
   const handleChange = <K extends keyof typeof form>(field: K, value: (typeof form)[K]) => {

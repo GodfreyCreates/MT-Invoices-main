@@ -185,7 +185,7 @@ export function CompaniesPage() {
       toast.success('Company created successfully');
       setForm(createEmptyCompanyFormValues());
       setIsCreateOpen(false);
-      navigate('/');
+      navigate('/dashboard');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to create company');
     } finally {
@@ -197,7 +197,7 @@ export function CompaniesPage() {
     try {
       await workspace.switchCompany(companyId);
       toast.success('Company switched successfully');
-      navigate('/');
+      navigate('/dashboard');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to switch company');
     }

@@ -81,10 +81,10 @@ export function MobileNav() {
       >
         <nav className="grid grid-cols-[1fr_1fr_auto_1fr_1fr] items-end gap-1 pb-1">
           {renderNavItem({
-            to: '/',
+            to: '/dashboard',
             label: 'Home',
             icon: LayoutDashboard,
-            isActive: location.pathname === '/',
+            isActive: location.pathname === '/dashboard',
           })}
           {renderNavItem({
             to: '/invoices',

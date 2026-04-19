@@ -29,7 +29,7 @@ export function AuthPage() {
     'from' in location.state &&
     typeof location.state.from === 'string'
       ? location.state.from
-      : '/';
+      : '/dashboard';
   const prefilledEmail = searchParams.get('email') ?? '';
   const invited = searchParams.get('invited') === '1';
 

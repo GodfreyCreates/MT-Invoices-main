@@ -2588,7 +2588,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
     try {
       const access = await getCompanyAccessContext(session.user.id);
       if (access.memberships.length > 0) {
-        res.redirect(302, "/");
+        res.redirect(302, "/dashboard");
         return;
       }
     } catch (error) {

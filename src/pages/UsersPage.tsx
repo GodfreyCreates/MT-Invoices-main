@@ -674,7 +674,7 @@ export function UsersPage() {
               This workspace keeps the full users directory behind an admin role so account details stay private.
             </p>
             <div className="mt-8">
-              <Button onClick={() => navigate('/')}>Back to dashboard</Button>
+              <Button onClick={() => navigate('/dashboard')}>Back to dashboard</Button>
             </div>
           </div>
         </main>
