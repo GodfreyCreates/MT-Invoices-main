@@ -16,7 +16,7 @@ import { AppHeader } from '../components/layout/AppHeader';
 import { Button } from '../components/ui/Button';
 import { PopoverSelect, type PopoverSelectOption } from '../components/ui/PopoverSelect';
 import { ApiError, apiRequest } from '../lib/api';
-import { authClient } from '../lib/auth-client';
+import { authClient, isAuthenticatedSession } from '../lib/auth-client';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
 
@@ -538,6 +538,7 @@ function InviteUserDialog({
 export function UsersPage() {
   const navigate = useNavigate();
   const { data: session, isPending: isSessionPending } = authClient.useSession();
+  const isAuthenticated = isAuthenticatedSession(session);
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -576,7 +577,7 @@ export function UsersPage() {
   };
 
   useEffect(() => {
-    if (isSessionPending || !session) {
+    if (isSessionPending || !isAuthenticated) {
       return;
     }
 
@@ -587,7 +588,7 @@ export function UsersPage() {
     }
 
     loadUsers();
-  }, [isSessionPending, session]);
+  }, [isAuthenticated, isSessionPending, session]);
 
   const filteredUsers = useMemo(() => {
     return users.filter((user) => {

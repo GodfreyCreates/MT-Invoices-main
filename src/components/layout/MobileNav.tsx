@@ -2,16 +2,17 @@ import React from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { LayoutDashboard, List, PlusCircle, Settings, Users } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { authClient } from '../../lib/auth-client';
+import { authClient, isAuthenticatedSession } from '../../lib/auth-client';
 import { useWorkspace } from '../../lib/workspace';
 
 export function MobileNav() {
   const { data: session } = authClient.useSession();
   const workspace = useWorkspace();
   const location = useLocation();
+  const isAuthenticated = isAuthenticatedSession(session);
 
   if (
-    !session ||
+    !isAuthenticated ||
     workspace.companies.length === 0 ||
     location.pathname.startsWith('/company/setup') ||
     location.pathname.startsWith('/print')
@@ -20,7 +21,7 @@ export function MobileNav() {
   }
 
   const trailingItems =
-    session.user.role === 'admin'
+    session.user?.role === 'admin'
       ? [
           {
             to: '/users',

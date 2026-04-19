@@ -1,6 +1,6 @@
 import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
-import { authClient } from '../lib/auth-client';
+import { authClient, isAuthenticatedSession } from '../lib/auth-client';
 import { useWorkspace } from '../lib/workspace';
 
 export function ProtectedRoute({
@@ -13,12 +13,13 @@ export function ProtectedRoute({
   const location = useLocation();
   const { data: session, isPending } = authClient.useSession();
   const workspace = useWorkspace();
+  const isAuthenticated = isAuthenticatedSession(session);
   const hasWorkspaceData =
     workspace.companies.length > 0 ||
     Boolean(workspace.activeCompany) ||
     (workspace.allCompanies?.length ?? 0) > 0;
-  const isResolvingAuth = isPending && !session;
-  const isResolvingWorkspace = Boolean(session) && !workspace.isReady;
+  const isResolvingAuth = isPending && !isAuthenticated;
+  const isResolvingWorkspace = isAuthenticated && !workspace.isReady;
 
   if (isResolvingAuth || isResolvingWorkspace) {
     return (
@@ -28,7 +29,7 @@ export function ProtectedRoute({
     );
   }
 
-  if (!session) {
+  if (!isAuthenticated) {
     return (
       <Navigate
         to="/auth"

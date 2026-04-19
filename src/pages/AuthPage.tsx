@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Loader2, MailCheck } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { authClient } from '../lib/auth-client';
+import { authClient, isAuthenticatedSession } from '../lib/auth-client';
 import { useBranding } from '../lib/branding';
 import { Button } from '../components/ui/Button';
 import { toast } from 'sonner';
@@ -21,6 +21,7 @@ export function AuthPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { data: session } = authClient.useSession();
+  const isAuthenticated = isAuthenticatedSession(session);
   const { resolvedLogoSrc } = useBranding();
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const redirectTo =
@@ -40,10 +41,10 @@ export function AuthPage() {
   }, [prefilledEmail]);
 
   useEffect(() => {
-    if (session) {
+    if (isAuthenticated) {
       navigate(redirectTo, { replace: true });
     }
-  }, [navigate, redirectTo, session]);
+  }, [isAuthenticated, navigate, redirectTo]);
 
   const isEmailVerificationError = (message: string) =>
     message.trim().toLowerCase().includes('email not verified');

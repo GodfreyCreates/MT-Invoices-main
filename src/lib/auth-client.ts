@@ -9,3 +9,17 @@ export const authClient = createAuthClient({
         adminClient()
     ]
 });
+
+type SessionLike = {
+    user?: {
+        id?: string | null;
+    } | null;
+} | null | undefined;
+
+export function isAuthenticatedSession(session: SessionLike): session is {
+    user: {
+        id: string;
+    };
+} {
+    return typeof session?.user?.id === "string" && session.user.id.length > 0;
+}
