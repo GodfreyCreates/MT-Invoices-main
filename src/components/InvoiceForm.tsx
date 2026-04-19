@@ -4,8 +4,9 @@ import { Input } from './ui/Input';
 import { Label } from './ui/Label';
 import { Button } from './ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/Card';
-import { Plus, Copy, Trash2 } from 'lucide-react';
+import { Plus, Copy, Trash2, ChevronDown } from 'lucide-react';
 import { DEFAULT_AUTHORIZED_SIGNATURE } from '../store/useInvoiceStore';
+import { invoiceThemes } from '../lib/invoice-themes';
 
 type InvoiceFormProps = {
   isPreviewVisible?: boolean;
@@ -14,6 +15,8 @@ type InvoiceFormProps = {
 export function InvoiceForm({ isPreviewVisible = true }: InvoiceFormProps) {
   const { data, updateField, addService, updateService, duplicateService, removeService } = useInvoiceStore();
   const isInlineServicesLayout = !isPreviewVisible;
+  const [isThemePaneOpen, setIsThemePaneOpen] = React.useState(false);
+  const activeTheme = invoiceThemes.find((theme) => theme.id === data.theme) ?? invoiceThemes[0];
 
   // When preview is hidden: single straight row using flex, each field shrinks proportionally.
   // When preview is visible: stacked multi-row grid layout.
@@ -99,6 +102,87 @@ export function InvoiceForm({ isPreviewVisible = true }: InvoiceFormProps) {
           <div className="space-y-2">
             <Label>Payment Terms</Label>
             <Input value={data.paymentTerms} onChange={(e) => updateField('paymentTerms', e.target.value)} />
+          </div>
+          <div className="space-y-3 md:col-span-3">
+            <button
+              type="button"
+              onClick={() => setIsThemePaneOpen((current) => !current)}
+              className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left transition-colors hover:border-slate-300 hover:bg-slate-50"
+              aria-expanded={isThemePaneOpen}
+            >
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Theme
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <span className="font-semibold text-slate-900">{activeTheme.name}</span>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="h-3 w-8 rounded-full"
+                      style={{ backgroundColor: activeTheme.colors.primary }}
+                    />
+                    <span
+                      className="h-3 w-8 rounded-full"
+                      style={{ backgroundColor: activeTheme.colors.secondary }}
+                    />
+                    <span
+                      className="h-3 w-8 rounded-full border"
+                      style={{
+                        backgroundColor: activeTheme.colors.accentSoft,
+                        borderColor: activeTheme.colors.accentBorder,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+              <ChevronDown
+                className={`h-4 w-4 flex-shrink-0 text-slate-500 transition-transform ${
+                  isThemePaneOpen ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+            {isThemePaneOpen ? (
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {invoiceThemes.map((theme) => {
+                  const isActive = data.theme === theme.id;
+
+                  return (
+                    <button
+                      key={theme.id}
+                      type="button"
+                      onClick={() => updateField('theme', theme.id)}
+                      className={`rounded-2xl border p-4 text-left transition-all ${
+                        isActive
+                          ? 'border-slate-900 bg-slate-50 shadow-sm'
+                          : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-semibold text-slate-900">{theme.name}</p>
+                        {isActive ? <span className="h-2.5 w-2.5 rounded-full bg-slate-900" /> : null}
+                      </div>
+                      <div className="mt-4 flex items-center gap-2">
+                        <span
+                          className="h-3 flex-1 rounded-full"
+                          style={{ backgroundColor: theme.colors.primary }}
+                        />
+                        <span
+                          className="h-3 flex-1 rounded-full"
+                          style={{ backgroundColor: theme.colors.secondary }}
+                        />
+                        <span
+                          className="h-3 flex-1 rounded-full border"
+                          style={{
+                            backgroundColor: theme.colors.accentSoft,
+                            borderColor: theme.colors.accentBorder,
+                          }}
+                        />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
           </div>
         </CardContent>
       </Card>

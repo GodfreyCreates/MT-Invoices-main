@@ -4,6 +4,7 @@ import { admin } from "better-auth/plugins";
 import { db } from "../db";
 import { user } from "../db/auth-schema";
 import { count } from "drizzle-orm";
+import { sendAccountVerificationEmail } from "../email";
 import { getAuthSecret, getBaseUrl, getTrustedOrigins } from "./server-env";
 
 export const auth = betterAuth({
@@ -18,7 +19,22 @@ export const auth = betterAuth({
         },
     },
     emailAndPassword: {
-        enabled: true
+        enabled: true,
+        disableSignUp: true,
+        autoSignIn: false,
+        requireEmailVerification: true,
+    },
+    emailVerification: {
+        autoSignInAfterVerification: true,
+        sendOnSignIn: false,
+        sendOnSignUp: true,
+        sendVerificationEmail: async ({ user, url }) => {
+            await sendAccountVerificationEmail({
+                email: user.email,
+                name: user.name,
+                verificationUrl: url,
+            });
+        },
     },
     trustedOrigins: getTrustedOrigins(),
     trustHost: false,

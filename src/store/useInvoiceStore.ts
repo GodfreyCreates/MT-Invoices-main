@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { format } from 'date-fns';
 import { apiRequest } from '../lib/api';
+import { DEFAULT_INVOICE_THEME, type InvoiceThemeId } from '../lib/invoice-themes';
 
 export interface ServiceRow {
   id: string;
@@ -30,16 +31,46 @@ export interface InvoiceData {
   issueDate: string;
   dueDate: string;
   paymentTerms: string;
+  theme: InvoiceThemeId;
   notes: string;
   termsAndConditions?: string;
   authorizedSignature: string;
   verificationToken?: string;
   userId?: string | null;
+  companyId?: string | null;
   ownerLogoUrl?: string | null;
+  companyDocumentLogoUrl?: string | null;
+  issuerName?: string | null;
+  issuerEmail?: string | null;
+  issuerPhone?: string | null;
+  issuerPoBox?: string | null;
+  issuerStreetAddress?: string | null;
+  issuerStandNumber?: string | null;
+  bankName?: string | null;
+  bankAccountHolder?: string | null;
+  bankAccountNumber?: string | null;
+  bankAccountType?: string | null;
+  bankBranchCode?: string | null;
 
   // Services
   services: ServiceRow[];
 }
+
+export type InvoiceCompanyContext = {
+  companyId: string;
+  companyDocumentLogoUrl: string | null;
+  issuerName: string;
+  issuerEmail: string;
+  issuerPhone: string;
+  issuerPoBox: string | null;
+  issuerStreetAddress: string;
+  issuerStandNumber: string | null;
+  bankName: string;
+  bankAccountHolder: string;
+  bankAccountNumber: string;
+  bankAccountType: string;
+  bankBranchCode: string;
+};
 
 interface InvoiceStore {
   data: InvoiceData & { id?: string };
@@ -49,8 +80,9 @@ interface InvoiceStore {
   updateService: (id: string, field: keyof ServiceRow, value: any) => void;
   duplicateService: (id: string) => void;
   removeService: (id: string) => void;
-  saveInvoice: () => Promise<void>;
+  saveInvoice: () => Promise<InvoiceData & { id: string }>;
   setInvoiceData: (data: InvoiceData & { id?: string }) => void;
+  syncCompanyContext: (context: InvoiceCompanyContext) => void;
 }
 
 const generateId = () => globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).substring(2, 9);
@@ -83,6 +115,7 @@ export const useInvoiceStore = create<InvoiceStore>((set, get) => ({
     issueDate: format(new Date(), 'yyyy-MM-dd'),
     dueDate: format(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'),
     paymentTerms: 'Net 30',
+    theme: DEFAULT_INVOICE_THEME,
     notes: 'Thank you for your business.',
     authorizedSignature: DEFAULT_AUTHORIZED_SIGNATURE,
     services: [defaultService],
@@ -133,9 +166,30 @@ export const useInvoiceStore = create<InvoiceStore>((set, get) => ({
     set({
       data: {
         ...data,
+        theme: data.theme ?? DEFAULT_INVOICE_THEME,
         authorizedSignature: data.authorizedSignature ?? DEFAULT_AUTHORIZED_SIGNATURE,
       },
     }),
+  syncCompanyContext: (context) =>
+    set((state) => ({
+      data: {
+        ...state.data,
+        companyId: context.companyId,
+        ownerLogoUrl: context.companyDocumentLogoUrl,
+        companyDocumentLogoUrl: context.companyDocumentLogoUrl,
+        issuerName: context.issuerName,
+        issuerEmail: context.issuerEmail,
+        issuerPhone: context.issuerPhone,
+        issuerPoBox: context.issuerPoBox,
+        issuerStreetAddress: context.issuerStreetAddress,
+        issuerStandNumber: context.issuerStandNumber,
+        bankName: context.bankName,
+        bankAccountHolder: context.bankAccountHolder,
+        bankAccountNumber: context.bankAccountNumber,
+        bankAccountType: context.bankAccountType,
+        bankBranchCode: context.bankBranchCode,
+      },
+    })),
   saveInvoice: async () => {
     set({ isSaving: true });
     try {
@@ -146,7 +200,7 @@ export const useInvoiceStore = create<InvoiceStore>((set, get) => ({
       });
 
       set({ data: savedData });
-      return;
+      return savedData;
     } catch (error) {
       console.error('Error saving invoice:', error);
       throw error;

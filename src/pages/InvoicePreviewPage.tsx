@@ -1,23 +1,29 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { InvoiceData } from '../store/useInvoiceStore';
 import { InvoicePreview } from '../components/InvoicePreview';
 import { Button } from '../components/ui/Button';
 import { ArrowLeft, Download } from 'lucide-react';
 import { AppHeader } from '../components/layout/AppHeader';
-import html2pdf from 'html2pdf.js';
 import { ApiError, apiRequest } from '../lib/api';
+import { downloadInvoicePdf } from '../lib/invoice-pdf';
+import { useWorkspace } from '../lib/workspace';
+import { toast } from 'sonner';
 
 export function InvoicePreviewPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { activeCompany } = useWorkspace();
   const [invoice, setInvoice] = useState<(InvoiceData & { id: string }) | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const componentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const fetchInvoice = async () => {
+      setIsLoading(true);
+      setError(null);
+
       try {
         const data = await apiRequest<(InvoiceData & { id: string })>(`/api/invoices/${id}`);
         setInvoice(data);
@@ -37,37 +43,24 @@ export function InvoicePreviewPage() {
     };
 
     if (id) {
-      fetchInvoice();
+      void fetchInvoice();
     }
-  }, [id]);
+  }, [activeCompany?.id, id]);
 
-  const handleExportPDF = () => {
-    if (!componentRef.current || !invoice) return;
+  const handleDownloadPDF = async () => {
+    if (!invoice || isDownloading) return;
 
-    const element = componentRef.current;
-    
-    const opt = {
-      margin: 0,
-      filename: `Invoice_${invoice.invoiceNo}.pdf`,
-      image: { type: 'jpeg' as const, quality: 0.98 },
-      html2canvas: { 
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        onclone: (document: Document) => {
-          const container = document.getElementById('invoice-preview-container');
-          if (container) {
-            container.classList.remove('gap-8');
-            const pages = container.querySelectorAll('.shadow-xl');
-            pages.forEach(page => page.classList.remove('shadow-xl'));
-          }
-        }
-      },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
-      pagebreak: { mode: 'css', before: '.break-before-page', after: '.break-after-page' }
-    };
+    setIsDownloading(true);
 
-    html2pdf().set(opt).from(element).save();
+    try {
+      toast.info('Preparing download...');
+      await downloadInvoicePdf(invoice, `Invoice_${invoice.invoiceNo}.pdf`);
+      toast.success('Invoice downloaded successfully');
+    } catch (downloadError) {
+      toast.error(downloadError instanceof Error ? downloadError.message : 'Failed to download invoice');
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   if (isLoading) {
@@ -102,12 +95,13 @@ export function InvoicePreviewPage() {
         showCreateInvoice={false}
         action={
           <Button
-            onClick={handleExportPDF}
+            onClick={() => void handleDownloadPDF()}
+            disabled={isDownloading}
             className="h-10 w-10 px-0 sm:h-10 sm:w-auto sm:px-4 gap-2"
-            aria-label="Export invoice as PDF"
+            aria-label={isDownloading ? 'Downloading invoice as PDF' : 'Download invoice as PDF'}
           >
             <Download className="h-4 w-4" />
-            <span className="hidden sm:inline">Export PDF</span>
+            <span className="hidden sm:inline">{isDownloading ? 'Downloading...' : 'Download PDF'}</span>
           </Button>
         }
       />
@@ -123,12 +117,12 @@ export function InvoicePreviewPage() {
                 Invoice {invoice.invoiceNo}
               </h1>
               <p className="mt-2 text-sm text-gray-500 sm:text-base">
-                Review the final document, then export a PDF copy from the header.
+                Review the final document, then download a PDF copy from the header.
               </p>
             </div>
           </div>
 
-          <InvoicePreview ref={componentRef} invoiceData={invoice} />
+          <InvoicePreview invoiceData={invoice} />
         </div>
       </main>
     </div>

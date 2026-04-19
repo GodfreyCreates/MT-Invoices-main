@@ -1,15 +1,15 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useInvoiceStore, InvoiceData } from '../store/useInvoiceStore';
 import { Button } from '../components/ui/Button';
 import { Edit, Trash2, Download, FileText, Eye, Search } from 'lucide-react';
 import { AppHeader } from '../components/layout/AppHeader';
 import { format } from 'date-fns';
-import { InvoicePreview } from '../components/InvoicePreview';
-import html2pdf from 'html2pdf.js';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { apiRequest } from '../lib/api';
+import { downloadInvoicePdf, downloadInvoicesPdf } from '../lib/invoice-pdf';
+import { useWorkspace } from '../lib/workspace';
 
 export function Invoices() {
   const [invoices, setInvoices] = useState<(InvoiceData & { id: string })[]>([]);
@@ -21,9 +21,10 @@ export function Invoices() {
   const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; count: number; onConfirm: () => void }>({ isOpen: false, count: 0, onConfirm: () => {} });
   const navigate = useNavigate();
   const setInvoiceData = useInvoiceStore((state) => state.setInvoiceData);
-  const hiddenPreviewRef = useRef<HTMLDivElement>(null);
+  const { activeCompany } = useWorkspace();
 
   const fetchInvoices = async () => {
+    setIsLoading(true);
     try {
       const data = await apiRequest<(InvoiceData & { id: string })[]>('/api/invoices');
       setInvoices(data);
@@ -36,8 +37,14 @@ export function Invoices() {
   };
 
   useEffect(() => {
-    fetchInvoices();
-  }, []);
+    if (!activeCompany) {
+      setInvoices([]);
+      setIsLoading(false);
+      return;
+    }
+
+    void fetchInvoices();
+  }, [activeCompany?.id]);
 
   const filteredInvoices = invoices.filter(invoice => {
     const query = searchQuery.toLowerCase();
@@ -91,42 +98,20 @@ export function Invoices() {
     setIsBulkDownloading(true);
     toast.info(`Preparing ${selectedIds.length} invoices for download...`);
     setDownloadingIds(selectedIds);
-    
-    setTimeout(() => {
-      if (!hiddenPreviewRef.current) {
-        setDownloadingIds([]);
-        setIsBulkDownloading(false);
-        return;
-      }
-      
-      const element = hiddenPreviewRef.current;
-      const opt = {
-        margin: 0,
-        filename: `Bulk_Invoices_${format(new Date(), 'yyyyMMdd')}.pdf`,
-        image: { type: 'jpeg' as const, quality: 0.98 },
-        html2canvas: { 
-          scale: 2,
-          useCORS: true,
-          logging: false,
-          onclone: (document: Document) => {
-            const container = document.getElementById('hidden-invoice-preview-container');
-            if (container) {
-              container.classList.remove('gap-8');
-              const pages = container.querySelectorAll('.shadow-xl');
-              pages.forEach(page => page.classList.remove('shadow-xl'));
-            }
-          }
-        },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
-        pagebreak: { mode: 'css', before: '.break-before-page', after: '.break-after-page' }
-      };
-      
-      html2pdf().set(opt).from(element).save().then(() => {
-        setDownloadingIds([]);
-        setIsBulkDownloading(false);
-        toast.success('Bulk download complete');
-      });
-    }, 1000); // Give it a bit more time to render all previews
+
+    try {
+      const selectedInvoices = invoices.filter((invoice) => selectedIds.includes(invoice.id));
+      await downloadInvoicesPdf(
+        selectedInvoices,
+        `Bulk_Invoices_${format(new Date(), 'yyyyMMdd')}.pdf`,
+      );
+      toast.success('Bulk download complete');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to download invoices');
+    } finally {
+      setDownloadingIds([]);
+      setIsBulkDownloading(false);
+    }
   };
 
   const handleEdit = (invoice: InvoiceData & { id: string }) => {
@@ -156,41 +141,15 @@ export function Invoices() {
   const handleDownload = async (invoice: InvoiceData & { id: string }) => {
     setDownloadingIds([invoice.id]);
     toast.info('Preparing download...');
-    
-    // Wait for state update and render
-    setTimeout(() => {
-      if (!hiddenPreviewRef.current) {
-        setDownloadingIds([]);
-        return;
-      }
 
-      const element = hiddenPreviewRef.current;
-      
-      const opt = {
-        margin: 0,
-        filename: `Invoice_${invoice.invoiceNo}.pdf`,
-        image: { type: 'jpeg' as const, quality: 0.98 },
-        html2canvas: { 
-          scale: 2,
-          useCORS: true,
-          logging: false,
-          onclone: (document: Document) => {
-            const container = document.getElementById('hidden-invoice-preview-container');
-            if (container) {
-              container.classList.remove('gap-8');
-              const pages = container.querySelectorAll('.shadow-xl');
-              pages.forEach(page => page.classList.remove('shadow-xl'));
-            }
-          }
-        },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
-        pagebreak: { mode: 'css', before: '.break-before-page', after: '.break-after-page' }
-      };
-
-      html2pdf().set(opt).from(element).save().then(() => {
-        setDownloadingIds([]);
-      });
-    }, 500);
+    try {
+      await downloadInvoicePdf(invoice, `Invoice_${invoice.invoiceNo}.pdf`);
+      toast.success('Invoice downloaded successfully');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to download invoice');
+    } finally {
+      setDownloadingIds([]);
+    }
   };
 
   return (
@@ -202,7 +161,7 @@ export function Invoices() {
           <div className="max-w-2xl">
             <h1 className="text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">Invoices</h1>
             <p className="mt-2 text-sm text-gray-500 sm:text-base">
-              Search, review, download, and manage every invoice from one place.
+              Search, review, download, and manage every invoice in {activeCompany?.name ?? 'your active company'}.
             </p>
           </div>
 
@@ -361,20 +320,6 @@ export function Invoices() {
           )}
         </div>
       </main>
-
-      {/* Hidden container for PDF generation */}
-      <div style={{ position: 'absolute', left: '-9999px', top: '-9999px' }}>
-        {downloadingIds.length > 0 && (
-          <div id="hidden-invoice-preview-container" ref={hiddenPreviewRef}>
-            {downloadingIds.map(id => (
-              <InvoicePreview 
-                key={id}
-                invoiceData={invoices.find(i => i.id === id)} 
-              />
-            ))}
-          </div>
-        )}
-      </div>
 
       {/* Delete Confirmation Modal */}
       <AnimatePresence>

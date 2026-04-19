@@ -3,12 +3,21 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { LayoutDashboard, List, PlusCircle, Settings, Users } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { authClient } from '../../lib/auth-client';
+import { useWorkspace } from '../../lib/workspace';
 
 export function MobileNav() {
   const { data: session } = authClient.useSession();
+  const workspace = useWorkspace();
   const location = useLocation();
 
-  if (!session) return null;
+  if (
+    !session ||
+    workspace.companies.length === 0 ||
+    location.pathname.startsWith('/company/setup') ||
+    location.pathname.startsWith('/print')
+  ) {
+    return null;
+  }
 
   const trailingItems =
     session.user.role === 'admin'

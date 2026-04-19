@@ -7,15 +7,18 @@ import { AppHeader } from '../components/layout/AppHeader';
 import { format } from 'date-fns';
 import { apiRequest } from '../lib/api';
 import { formatCurrency } from '../lib/utils';
+import { useWorkspace } from '../lib/workspace';
 import { toast } from 'sonner';
 
 export function Dashboard() {
   const [invoices, setInvoices] = useState<(InvoiceData & { id: string })[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
+  const { activeCompany } = useWorkspace();
 
   useEffect(() => {
     const fetchInvoices = async () => {
+      setIsLoading(true);
       try {
         const data = await apiRequest<(InvoiceData & { id: string })[]>('/api/invoices');
         setInvoices(data);
@@ -27,8 +30,14 @@ export function Dashboard() {
       }
     };
 
-    fetchInvoices();
-  }, []);
+    if (!activeCompany) {
+      setInvoices([]);
+      setIsLoading(false);
+      return;
+    }
+
+    void fetchInvoices();
+  }, [activeCompany?.id]);
 
   const calculateInvoiceTotal = (invoice: InvoiceData) => {
     return invoice.services.reduce((acc, service) => {
@@ -56,8 +65,12 @@ export function Dashboard() {
       <main className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
         {/* Welcome Section */}
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Welcome back, MT Legacy Logistics</h1>
-          <p className="text-gray-500 mt-1">Here's an overview of your invoicing activity.</p>
+          <h1 className="text-2xl font-bold text-gray-900">
+            {activeCompany ? activeCompany.name : 'Workspace overview'}
+          </h1>
+          <p className="text-gray-500 mt-1">
+            Here&apos;s an overview of the invoicing activity in your active company workspace.
+          </p>
         </div>
 
         {/* Stats Grid */}

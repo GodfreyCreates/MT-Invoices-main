@@ -1,19 +1,20 @@
 import React, { startTransition, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  CalendarDays,
   CheckCircle2,
   ChevronRight,
   Clock3,
   Mail,
   Search,
   ShieldCheck,
+  UserPlus,
   Users,
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { AppHeader } from '../components/layout/AppHeader';
 import { Button } from '../components/ui/Button';
+import { PopoverSelect, type PopoverSelectOption } from '../components/ui/PopoverSelect';
 import { ApiError, apiRequest } from '../lib/api';
 import { authClient } from '../lib/auth-client';
 import { cn } from '../lib/utils';
@@ -39,6 +40,24 @@ type UserSummary = {
 
 type RoleFilter = 'all' | 'admin' | 'user';
 type VerificationFilter = 'all' | 'verified' | 'unverified';
+type InviteRole = 'admin' | 'user';
+
+const inviteRoleOptions: PopoverSelectOption<InviteRole>[] = [
+  { value: 'user', label: 'User' },
+  { value: 'admin', label: 'Admin' },
+];
+
+const roleFilterOptions: PopoverSelectOption<RoleFilter>[] = [
+  { value: 'all', label: 'All roles' },
+  { value: 'admin', label: 'Admins' },
+  { value: 'user', label: 'Users' },
+];
+
+const verificationFilterOptions: PopoverSelectOption<VerificationFilter>[] = [
+  { value: 'all', label: 'All states' },
+  { value: 'verified', label: 'Verified' },
+  { value: 'unverified', label: 'Pending' },
+];
 
 const shortDateFormatter = new Intl.DateTimeFormat('en-ZA', {
   dateStyle: 'medium',
@@ -410,6 +429,112 @@ function UserDetailsDialog({
   );
 }
 
+function InviteUserDialog({
+  isOpen,
+  email,
+  role,
+  isSubmitting,
+  onEmailChange,
+  onRoleChange,
+  onClose,
+  onSubmit,
+}: {
+  isOpen: boolean;
+  email: string;
+  role: InviteRole;
+  isSubmitting: boolean;
+  onEmailChange: (value: string) => void;
+  onRoleChange: (value: InviteRole) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <AnimatePresence>
+      {isOpen ? (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center p-0 sm:items-center sm:p-4">
+          <motion.button
+            type="button"
+            aria-label="Close invitation dialog"
+            className="absolute inset-0 bg-slate-950/55 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+          />
+          <motion.div
+            role="dialog"
+            aria-modal="true"
+            initial={{ opacity: 0, y: 20, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.98 }}
+            transition={{ duration: 0.18 }}
+            className="relative z-10 flex w-full max-w-lg flex-col overflow-hidden rounded-t-[32px] border border-white/70 bg-white shadow-[0_40px_120px_-40px_rgba(15,23,42,0.45)] sm:rounded-[32px]"
+          >
+            <div className="border-b border-slate-200/80 bg-gradient-to-br from-slate-50 via-white to-indigo-50/80 px-5 py-5 sm:px-6">
+              <div className="relative pr-12">
+                <p className="inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-indigo-700">
+                  <UserPlus className="h-3.5 w-3.5" />
+                  Invite account
+                </p>
+                <h2 className="mt-4 text-2xl font-semibold tracking-tight text-slate-900">
+                  Send an invitation
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  The recipient will get an email with a secure invitation link to create their password. Their email stays fixed during setup.
+                </p>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="absolute right-0 top-0 rounded-full border border-slate-200 bg-white p-2 text-slate-500 transition-colors hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-5 px-5 py-5 sm:px-6 sm:py-6">
+              <div>
+                <label className="block text-sm font-medium text-slate-700">Email address</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => onEmailChange(event.target.value)}
+                  placeholder="user@example.com"
+                  className="mt-2 block h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 shadow-sm outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700">Role</label>
+                <PopoverSelect
+                  value={role}
+                  onValueChange={onRoleChange}
+                  options={inviteRoleOptions}
+                  ariaLabel="Invitation role"
+                  triggerClassName="mt-2 h-12"
+                />
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                Invitations expire automatically after 7 days. Sending a new invite for the same email replaces the previous active one.
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+                <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
+                  Cancel
+                </Button>
+                <Button onClick={onSubmit} disabled={isSubmitting} className="gap-2">
+                  {isSubmitting ? 'Sending invitation...' : 'Send invitation'}
+                </Button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      ) : null}
+    </AnimatePresence>
+  );
+}
+
 export function UsersPage() {
   const navigate = useNavigate();
   const { data: session, isPending: isSessionPending } = authClient.useSession();
@@ -420,6 +545,10 @@ export function UsersPage() {
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
   const [verificationFilter, setVerificationFilter] = useState<VerificationFilter>('all');
   const [selectedUser, setSelectedUser] = useState<UserSummary | null>(null);
+  const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<InviteRole>('user');
+  const [isSendingInvite, setIsSendingInvite] = useState(false);
 
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const normalizedQuery = deferredSearchQuery.trim().toLowerCase();
@@ -498,6 +627,36 @@ export function UsersPage() {
     });
   };
 
+  const handleSendInvitation = async () => {
+    const normalizedEmail = inviteEmail.trim().toLowerCase();
+    if (!normalizedEmail) {
+      toast.error('Email is required');
+      return;
+    }
+
+    setIsSendingInvite(true);
+
+    try {
+      await apiRequest('/api/invitations', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: normalizedEmail,
+          role: inviteRole,
+        }),
+      });
+      toast.success(`Invitation sent to ${normalizedEmail}`);
+      setInviteEmail('');
+      setInviteRole('user');
+      setIsInviteDialogOpen(false);
+    } catch (requestError) {
+      const message =
+        requestError instanceof Error ? requestError.message : 'Failed to send invitation';
+      toast.error(message);
+    } finally {
+      setIsSendingInvite(false);
+    }
+  };
+
   if (!isSessionPending && session && session.user.role !== 'admin') {
     return (
       <div className="min-h-screen bg-[#eef2ff] font-sans">
@@ -529,21 +688,8 @@ export function UsersPage() {
 
       <main className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">
         <section className="rounded-[28px] border border-white/70 bg-white/80 p-4 shadow-[0_30px_120px_-50px_rgba(15,23,42,0.35)] backdrop-blur-xl sm:rounded-[32px] sm:p-6">
-          <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
-            <div className="max-w-2xl">
-              <p className="inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-indigo-700">
-                <ShieldCheck className="h-3.5 w-3.5" />
-                Admin visibility
-              </p>
-              <h1 className="mt-4 max-w-xl text-2xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
-                Manage every account from one polished directory
-              </h1>
-              <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-500 sm:text-base">
-                Review account activity, verification state, and ownership details at a glance, then open any profile for the full picture.
-              </p>
-            </div>
-
-            <div className="grid gap-3 min-[480px]:grid-cols-2 xl:min-w-[620px] xl:grid-cols-[minmax(0,1.6fr)_repeat(2,minmax(0,0.8fr))]">
+          <div className="flex justify-end">
+            <div className="grid w-full gap-3 min-[480px]:grid-cols-2 xl:max-w-[620px] xl:grid-cols-[minmax(0,1.6fr)_repeat(2,minmax(0,0.8fr))]">
               <label className="relative block min-[480px]:col-span-2 xl:col-span-1">
                 <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <input
@@ -554,29 +700,25 @@ export function UsersPage() {
                 />
               </label>
 
-              <select
+              <PopoverSelect
                 value={roleFilter}
-                onChange={(event) => setRoleFilter(event.target.value as RoleFilter)}
-                className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 shadow-sm outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
-              >
-                <option value="all">All roles</option>
-                <option value="admin">Admins</option>
-                <option value="user">Users</option>
-              </select>
+                onValueChange={setRoleFilter}
+                options={roleFilterOptions}
+                ariaLabel="Filter users by role"
+                triggerClassName="h-12"
+              />
 
-              <select
+              <PopoverSelect
                 value={verificationFilter}
-                onChange={(event) => setVerificationFilter(event.target.value as VerificationFilter)}
-                className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 shadow-sm outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
-              >
-                <option value="all">All states</option>
-                <option value="verified">Verified</option>
-                <option value="unverified">Pending</option>
-              </select>
+                onValueChange={setVerificationFilter}
+                options={verificationFilterOptions}
+                ariaLabel="Filter users by verification state"
+                triggerClassName="h-12"
+              />
             </div>
           </div>
 
-          <div className="mt-8 grid gap-4 min-[480px]:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-6 grid gap-4 min-[480px]:grid-cols-2 xl:grid-cols-4">
             <StatCard
               label="Total users"
               value={stats.totalUsers}
@@ -605,7 +747,7 @@ export function UsersPage() {
         </section>
 
         <section className="mt-8 rounded-[28px] border border-white/70 bg-white/90 shadow-[0_30px_120px_-50px_rgba(15,23,42,0.35)] backdrop-blur-xl sm:rounded-[32px]">
-          <div className="flex flex-col gap-4 border-b border-slate-200/80 px-4 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-6">
+            <div className="flex flex-col gap-4 border-b border-slate-200/80 px-4 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-6">
             <div>
               <h2 className="text-xl font-semibold tracking-tight text-slate-900">All users</h2>
               <p className="mt-1 text-sm text-slate-500">
@@ -613,10 +755,13 @@ export function UsersPage() {
               </p>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="hidden items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-500 md:inline-flex">
-                <CalendarDays className="h-4 w-4 text-slate-400" />
-                Updated in real time from your auth store
-              </div>
+              <Button
+                className="w-full justify-center gap-2 sm:w-auto"
+                onClick={() => setIsInviteDialogOpen(true)}
+              >
+                <UserPlus className="h-4 w-4" />
+                Invite user
+              </Button>
               <Button
                 variant="outline"
                 className="w-full justify-center gap-2 sm:w-auto"
@@ -666,6 +811,21 @@ export function UsersPage() {
       </main>
 
       <UserDetailsDialog user={selectedUser} onClose={() => setSelectedUser(null)} />
+      <InviteUserDialog
+        isOpen={isInviteDialogOpen}
+        email={inviteEmail}
+        role={inviteRole}
+        isSubmitting={isSendingInvite}
+        onEmailChange={setInviteEmail}
+        onRoleChange={setInviteRole}
+        onClose={() => {
+          if (isSendingInvite) {
+            return;
+          }
+          setIsInviteDialogOpen(false);
+        }}
+        onSubmit={() => void handleSendInvitation()}
+      />
     </div>
   );
 }

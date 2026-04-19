@@ -1,22 +1,28 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Loader2, MailCheck } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { authClient } from '../lib/auth-client';
+import { useBranding } from '../lib/branding';
 import { Button } from '../components/ui/Button';
 import { toast } from 'sonner';
+import { ApiError, apiRequest } from '../lib/api';
 
 const MIN_PASSWORD_LENGTH = 8;
 
 export function AuthPage() {
-  const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isSendingVerificationEmail, setIsSendingVerificationEmail] = useState(false);
+  const [requiresEmailVerification, setRequiresEmailVerification] = useState(false);
+  const [verificationEmailTarget, setVerificationEmailTarget] = useState('');
+  const [verificationNotice, setVerificationNotice] = useState('');
   const navigate = useNavigate();
   const location = useLocation();
   const { data: session } = authClient.useSession();
+  const { resolvedLogoSrc } = useBranding();
+  const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const redirectTo =
     typeof location.state === 'object' &&
     location.state &&
@@ -24,26 +30,88 @@ export function AuthPage() {
     typeof location.state.from === 'string'
       ? location.state.from
       : '/';
+  const prefilledEmail = searchParams.get('email') ?? '';
+  const invited = searchParams.get('invited') === '1';
 
-  React.useEffect(() => {
+  useEffect(() => {
+    if (prefilledEmail) {
+      setEmail(prefilledEmail);
+    }
+  }, [prefilledEmail]);
+
+  useEffect(() => {
     if (session) {
       navigate(redirectTo, { replace: true });
     }
-  }, [session, navigate, redirectTo]);
+  }, [navigate, redirectTo, session]);
 
-  const handleAuthSuccess = async (message: string) => {
+  const isEmailVerificationError = (message: string) =>
+    message.trim().toLowerCase().includes('email not verified');
+
+  const sendVerificationEmail = async (targetEmail: string, showSuccessToast = true) => {
+    setIsSendingVerificationEmail(true);
+
+    try {
+      await apiRequest<{ status: boolean }>('/api/auth/send-verification-email', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: targetEmail,
+          callbackURL: redirectTo,
+        }),
+      });
+
+      setRequiresEmailVerification(true);
+      setVerificationEmailTarget(targetEmail);
+      setVerificationNotice(
+        `We sent a confirmation email to ${targetEmail}. Open it to verify your account, then sign in again.`,
+      );
+      setError('');
+
+      if (showSuccessToast) {
+        toast.success('Confirmation email sent');
+      }
+    } catch (requestError) {
+      const message =
+        requestError instanceof ApiError
+          ? requestError.message
+          : 'Failed to send verification email';
+
+      setRequiresEmailVerification(true);
+      setVerificationEmailTarget(targetEmail);
+      setVerificationNotice(
+        'Your email is not verified yet. We could not resend the confirmation email automatically. Try again below.',
+      );
+      setError(message);
+      toast.error(message);
+    } finally {
+      setIsSendingVerificationEmail(false);
+    }
+  };
+
+  const handleUnverifiedEmail = async (targetEmail: string) => {
+    setRequiresEmailVerification(true);
+    setVerificationEmailTarget(targetEmail);
+    setVerificationNotice(
+      `Your email is not verified yet. We're sending a confirmation email to ${targetEmail} now.`,
+    );
+    setError('');
+    await sendVerificationEmail(targetEmail, false);
+  };
+
+  const handleAuthSuccess = async () => {
     await authClient.getSession();
-    toast.success(message);
+    toast.success('Signed in successfully');
     navigate(redirectTo, { replace: true });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     setError('');
+    setRequiresEmailVerification(false);
+    setVerificationEmailTarget('');
+    setVerificationNotice('');
 
     const normalizedEmail = email.trim().toLowerCase();
-    const trimmedName = name.trim();
-
     if (!normalizedEmail) {
       setError('Email is required');
       return;
@@ -54,90 +122,118 @@ export function AuthPage() {
       return;
     }
 
-    if (!isLogin && !trimmedName) {
-      setError('Name is required');
-      return;
-    }
-
-    if (!isLogin && password !== confirmPassword) {
-      setError('Passwords do not match');
-      return;
-    }
-
     setIsLoading(true);
 
     try {
-      if (isLogin) {
-        await authClient.signIn.email({
+      await authClient.signIn.email(
+        {
           email: normalizedEmail,
           password,
-        }, {
+          callbackURL: redirectTo,
+        },
+        {
           onSuccess: async () => {
-            await handleAuthSuccess('Signed in successfully');
+            await handleAuthSuccess();
           },
-          onError: (ctx) => {
-            setError(ctx.error.message || 'Failed to sign in');
-            toast.error(ctx.error.message || 'Failed to sign in');
-          }
-        });
+          onError: async (ctx) => {
+            const message = ctx.error.message || 'Failed to sign in';
+
+            if (isEmailVerificationError(message)) {
+              await handleUnverifiedEmail(normalizedEmail);
+              return;
+            }
+
+            setError(message);
+            toast.error(message);
+          },
+        },
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to sign in';
+
+      if (isEmailVerificationError(message)) {
+        await handleUnverifiedEmail(normalizedEmail);
       } else {
-        await authClient.signUp.email({
-          email: normalizedEmail,
-          password,
-          name: trimmedName,
-        }, {
-          onSuccess: async () => {
-            await handleAuthSuccess('Account created successfully');
-          },
-          onError: (ctx) => {
-            setError(ctx.error.message || 'Failed to sign up');
-            toast.error(ctx.error.message || 'Failed to sign up');
-          }
-        });
+        setError(message);
+        toast.error(message);
       }
-    } catch (err: any) {
-      setError(err.message);
-      toast.error(err.message);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans">
-      <div className="sm:mx-auto sm:w-full sm:max-w-md flex flex-col items-center">
-        <div className="w-12 h-12 bg-blue-900 rounded-xl flex items-center justify-center text-white font-bold text-xl mb-4 shadow-sm">
-          MT
+    <div className="flex min-h-screen flex-col justify-center bg-gray-50 px-4 py-12 font-sans sm:px-6 lg:px-8">
+      <div className="flex flex-col items-center sm:mx-auto sm:w-full sm:max-w-md">
+        <div className="mb-4 flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+          <img
+            src={resolvedLogoSrc}
+            alt="MT Legacy logo"
+            className="h-full w-full object-contain"
+          />
         </div>
-        <h2 className="mt-2 text-center text-3xl font-extrabold text-gray-900 tracking-tight">
-          {isLogin ? 'Sign in to your account' : 'Create a new account'}
+        <h2 className="mt-2 text-center text-3xl font-extrabold tracking-tight text-gray-900">
+          Sign in to your account
         </h2>
+        <p className="mt-3 max-w-sm text-center text-sm leading-6 text-slate-500">
+          Access is managed by administrator invitation. If you need an account, ask your admin to send you an invitation email.
+        </p>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-white py-8 px-4 shadow-sm border border-gray-200 sm:rounded-xl sm:px-10">
-          <form className="space-y-6" onSubmit={handleSubmit}>
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg p-3">
-                {error}
-              </div>
-            )}
-
-            {!isLogin && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Name</label>
-                <div className="mt-1">
-                  <input
-                    type="text"
-                    required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    autoComplete="name"
-                    className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                  />
+        <div className="border border-gray-200 bg-white px-4 py-8 shadow-sm sm:rounded-xl sm:px-10">
+          {invited ? (
+            <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+              <div className="flex items-start gap-3">
+                <MailCheck className="mt-0.5 h-5 w-5 shrink-0" />
+                <div>
+                  <p className="font-semibold text-emerald-900">Invitation accepted</p>
+                  <p className="mt-1">Your account is ready. Sign in with the password you just created.</p>
                 </div>
               </div>
-            )}
+            </div>
+          ) : null}
+
+          {requiresEmailVerification ? (
+            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+              <div className="flex items-start gap-3">
+                <MailCheck className="mt-0.5 h-5 w-5 shrink-0" />
+                <div className="flex-1">
+                  <p className="font-semibold text-amber-950">Verify your email address</p>
+                  <p className="mt-1">
+                    {verificationNotice ||
+                      `We sent a confirmation email to ${verificationEmailTarget}. Open it to verify your account, then sign in again.`}
+                  </p>
+                  <div className="mt-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 border-amber-300 bg-white/80 text-amber-900 hover:bg-white"
+                      onClick={() => void sendVerificationEmail(verificationEmailTarget || email)}
+                      disabled={isSendingVerificationEmail || !(verificationEmailTarget || email)}
+                    >
+                      {isSendingVerificationEmail ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Sending...
+                        </>
+                      ) : (
+                        'Resend confirmation email'
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          <form className="space-y-6" onSubmit={handleSubmit}>
+            {error ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">
+                {error}
+              </div>
+            ) : null}
 
             <div>
               <label className="block text-sm font-medium text-gray-700">Email address</label>
@@ -146,9 +242,9 @@ export function AuthPage() {
                   type="email"
                   required
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(event) => setEmail(event.target.value)}
                   autoComplete="email"
-                  className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                  className="block w-full appearance-none rounded-lg border border-gray-300 px-3 py-2 placeholder-gray-400 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
                 />
               </div>
             </div>
@@ -160,69 +256,19 @@ export function AuthPage() {
                   type="password"
                   required
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete={isLogin ? 'current-password' : 'new-password'}
-                  className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                  onChange={(event) => setPassword(event.target.value)}
+                  autoComplete="current-password"
+                  className="block w-full appearance-none rounded-lg border border-gray-300 px-3 py-2 placeholder-gray-400 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
                 />
               </div>
-              {!isLogin && (
-                <p className="mt-2 text-xs text-gray-500">
-                  Use at least {MIN_PASSWORD_LENGTH} characters so your account is easier to protect.
-                </p>
-              )}
             </div>
-
-            {!isLogin && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Confirm password</label>
-                <div className="mt-1">
-                  <input
-                    type="password"
-                    required
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    autoComplete="new-password"
-                    className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                  />
-                </div>
-              </div>
-            )}
 
             <div>
               <Button type="submit" className="w-full justify-center" disabled={isLoading}>
-                {isLoading ? 'Please wait...' : isLogin ? 'Sign in' : 'Sign up'}
+                {isLoading ? 'Please wait...' : 'Sign in'}
               </Button>
             </div>
           </form>
-
-          <div className="mt-6">
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300" />
-              </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-gray-500">
-                  {isLogin ? 'New to MT Legacy?' : 'Already have an account?'}
-                </span>
-              </div>
-            </div>
-
-            <div className="mt-6">
-              <Button
-                variant="outline"
-                className="w-full justify-center"
-                disabled={isLoading}
-                onClick={() => {
-                  setIsLogin(!isLogin);
-                  setError('');
-                  setPassword('');
-                  setConfirmPassword('');
-                }}
-              >
-                {isLogin ? 'Create an account' : 'Sign in instead'}
-              </Button>
-            </div>
-          </div>
         </div>
       </div>
     </div>

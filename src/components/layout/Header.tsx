@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Building2,
   ChevronDown,
   FileText,
   LayoutDashboard,
@@ -86,6 +87,12 @@ export function Header({ left, right, className, contentClassName, user, onSignO
         icon: FileText,
         label: 'Invoices',
         matches: (pathname) => pathname.startsWith('/invoices') || pathname.startsWith('/invoice/'),
+      },
+      {
+        href: '/companies',
+        icon: Building2,
+        label: 'Companies',
+        matches: (pathname) => pathname.startsWith('/companies') || pathname.startsWith('/company/'),
       },
       {
         href: '/settings',
@@ -204,9 +211,9 @@ export function Header({ left, right, className, contentClassName, user, onSignO
                 {isMenuOpen ? (
                   <div
                     role="menu"
-                    className="absolute right-0 top-[calc(100%+0.75rem)] z-50 w-72 overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_24px_60px_-24px_rgba(15,23,42,0.35)] backdrop-blur-xl"
+                    className="absolute right-0 top-[calc(100%+0.75rem)] z-50 w-72 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_60px_-24px_rgba(15,23,42,0.35)]"
                   >
-                    <div className="border-b border-slate-200/80 bg-gradient-to-br from-slate-50 via-white to-indigo-50/80 px-4 py-4">
+                    <div className="border-b border-slate-200 bg-gradient-to-br from-slate-50 via-white to-indigo-50 px-4 py-4">
                       <div className="flex items-start gap-3">
                         {user.image ? (
                           <img
@@ -232,7 +239,7 @@ export function Header({ left, right, className, contentClassName, user, onSignO
                       </div>
                     </div>
 
-                    <div className="hidden border-b border-slate-200/80 p-2 sm:block">
+                    <div className="hidden border-b border-slate-200 p-2 sm:block">
                       {menuLinks.map((link) => {
                         const isActive = link.matches(location.pathname);
 

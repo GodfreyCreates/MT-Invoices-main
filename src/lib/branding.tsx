@@ -11,7 +11,7 @@ import React, {
 const DEFAULT_SITE_LOGO = '/logo.png';
 
 type BrandingContextValue = {
-  logoUrl: string | null;
+  siteLogoUrl: string | null;
   resolvedLogoSrc: string;
   refreshBranding: () => Promise<void>;
 };
@@ -30,7 +30,7 @@ function setHeadLink(rel: string, href: string) {
 }
 
 export function BrandingProvider({ children }: { children: React.ReactNode }) {
-  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [siteLogoUrl, setSiteLogoUrl] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const isMountedRef = useRef(true);
 
@@ -45,19 +45,19 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
         throw new Error('Failed to fetch branding');
       }
 
-      const data = (await response.json()) as { logoUrl?: string | null };
+      const data = (await response.json()) as { siteLogoUrl?: string | null };
       if (!isMountedRef.current) {
         return;
       }
 
-      setLogoUrl(data.logoUrl ?? null);
+      setSiteLogoUrl(data.siteLogoUrl ?? null);
       setVersion((current) => current + 1);
     } catch {
       if (!isMountedRef.current) {
         return;
       }
 
-      setLogoUrl(null);
+      setSiteLogoUrl(null);
       setVersion((current) => current + 1);
     }
   }, []);
@@ -71,7 +71,7 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
     };
   }, [refreshBranding]);
 
-  const resolvedLogoSrc = useMemo(() => logoUrl ?? DEFAULT_SITE_LOGO, [logoUrl]);
+  const resolvedLogoSrc = useMemo(() => siteLogoUrl ?? DEFAULT_SITE_LOGO, [siteLogoUrl]);
   const faviconSrc = useMemo(() => {
     const separator = resolvedLogoSrc.includes('?') ? '&' : '?';
     return `${resolvedLogoSrc}${separator}v=${version}`;
@@ -85,11 +85,11 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<BrandingContextValue>(
     () => ({
-      logoUrl,
+      siteLogoUrl,
       resolvedLogoSrc,
       refreshBranding,
     }),
-    [logoUrl, refreshBranding, resolvedLogoSrc],
+    [refreshBranding, resolvedLogoSrc, siteLogoUrl],
   );
 
   return <BrandingContext.Provider value={value}>{children}</BrandingContext.Provider>;
