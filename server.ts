@@ -1,13 +1,12 @@
-import express, { type Request, type Response } from "express";
+import express, { type Express, type Request, type Response } from "express";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import { isIP } from "node:net";
 import path from "node:path";
 import { and, asc, count, desc, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node";
-import puppeteer, { type Page } from "puppeteer";
+import type { Page } from "puppeteer";
 import { createRouteHandler as createUploadthingRouteHandler } from "uploadthing/express";
-import { createServer as createViteServer } from "vite";
 import { db } from "./src/db";
 import { ensureDatabaseSchema } from "./src/db/bootstrap";
 import { session as authSessions, user as authUsers } from "./src/db/auth-schema";
@@ -50,6 +49,9 @@ type SessionRecord = {
     id: string;
     role?: string | null;
   };
+};
+type CreateAppOptions = {
+  serveClientApp?: boolean;
 };
 type InvoiceExportTokenPayload = {
   version: typeof INVOICE_EXPORT_TOKEN_VERSION;
@@ -1206,6 +1208,7 @@ async function renderPdfFromRoute(req: Request, routePath: string) {
   const origin = getRequestOrigin(req);
   const targetUrl = new URL(routePath, origin).toString();
   const executablePath = getChromeExecutablePath();
+  const { default: puppeteer } = await import("puppeteer");
   const browser = await puppeteer.launch({
     headless: true,
     ...(executablePath ? { executablePath } : {}),
@@ -1395,11 +1398,10 @@ async function removeCompanyDocumentLogo(companyId: string) {
   }
 }
 
-async function startServer() {
+export async function createApp(options: CreateAppOptions = {}): Promise<Express> {
   await ensureDatabaseSchema();
 
   const app = express();
-  const port = Number(process.env.PORT ?? "3000");
 
   app.disable("x-powered-by");
   app.use(express.json({ limit: "1mb" }));
@@ -2598,26 +2600,38 @@ async function startServer() {
     next();
   });
 
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (_req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
+  if (options.serveClientApp) {
+    if (process.env.NODE_ENV !== "production") {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } else {
+      const distPath = path.join(process.cwd(), "dist");
+      app.use(express.static(distPath));
+      app.get("*", (_req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    }
   }
+
+  return app;
+}
+
+async function startServer() {
+  const app = await createApp({ serveClientApp: true });
+  const port = Number(process.env.PORT ?? "3000");
 
   app.listen(port, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${port}`);
   });
 }
 
-startServer().catch((error) => {
-  console.error("Failed to start server", error);
-  process.exit(1);
-});
+if (!process.env.VERCEL) {
+  startServer().catch((error) => {
+    console.error("Failed to start server", error);
+    process.exit(1);
+  });
+}
