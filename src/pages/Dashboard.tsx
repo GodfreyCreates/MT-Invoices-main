@@ -149,20 +149,20 @@ export function Dashboard() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left text-sm">
-                <thead className="bg-muted/40">
-                  <tr className="border-b border-border">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-border bg-muted/40">
+                  <tr>
                     <th className="px-6 py-4 font-medium text-muted-foreground">Invoice No</th>
                     <th className="px-6 py-4 font-medium text-muted-foreground">Client</th>
                     <th className="px-6 py-4 font-medium text-muted-foreground">Issue Date</th>
                     <th className="px-6 py-4 text-right font-medium text-muted-foreground">Amount</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-border">
                   {dashboard.recentInvoices.map((invoice) => (
                     <tr
                       key={invoice.id}
-                      className="border-b border-border cursor-pointer transition-colors hover:bg-muted/40"
+                      className="cursor-pointer bg-card transition-colors hover:bg-muted/40"
                       onClick={() => navigate(`/invoice/${invoice.id}/preview`)}
                     >
                       <td className="px-6 py-4 font-medium text-card-foreground">{invoice.invoiceNo}</td>
