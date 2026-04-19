@@ -970,6 +970,23 @@ function buildInvoiceIdWhere(companyId: string, invoiceId: string) {
   return and(eq(invoices.id, invoiceId), eq(invoices.companyId, companyId));
 }
 
+function getInvoiceRevenueSql() {
+  return sql<number>`
+    coalesce(
+      sum(
+        (
+          cast(${services.quantity} as numeric) * cast(${services.unitPrice} as numeric)
+        ) * (
+          1 - cast(${services.discountPercent} as numeric) / 100
+        ) * (
+          1 + cast(${services.taxPercent} as numeric) / 100
+        )
+      ),
+      0
+    )
+  `;
+}
+
 function parseInvoiceIds(value: unknown, field: string) {
   const rawValues = Array.isArray(value)
     ? value.flatMap((entry) => (typeof entry === "string" ? entry.split(",") : []))
@@ -1286,6 +1303,19 @@ async function getAuthenticatedSession(req: Request, res: Response) {
   } catch (error) {
     console.error("Failed to resolve session", error);
     res.status(401).json({ error: "Unauthorized" });
+    return null;
+  }
+}
+
+async function getOptionalSession(req: Request) {
+  try {
+    const session = await auth.api.getSession({
+      headers: fromNodeHeaders(req.headers),
+    });
+
+    return (session as SessionRecord | null) ?? null;
+  } catch (error) {
+    console.error("Failed to resolve session", error);
     return null;
   }
 }
@@ -2121,6 +2151,73 @@ async function startServer() {
     }
   });
 
+  app.get("/api/dashboard", async (req, res) => {
+    const session = await getAuthenticatedSession(req, res);
+    if (!session) {
+      return;
+    }
+
+    try {
+      const access = await getRequiredActiveCompanyContext(session.user.id);
+      const companyId = access.activeMembership.companyId;
+
+      const [invoiceSummaryRows, revenueRows, recentInvoiceRows] = await Promise.all([
+        db
+          .select({
+            totalInvoices: count(),
+            uniqueClients: sql<number>`count(distinct ${invoices.clientCompanyName})`,
+          })
+          .from(invoices)
+          .where(eq(invoices.companyId, companyId))
+          .limit(1),
+        db
+          .select({
+            totalRevenue: getInvoiceRevenueSql(),
+          })
+          .from(invoices)
+          .leftJoin(services, eq(services.invoiceId, invoices.id))
+          .where(eq(invoices.companyId, companyId))
+          .limit(1),
+        db
+          .select({
+            id: invoices.id,
+            invoiceNo: invoices.invoiceNo,
+            clientCompanyName: invoices.clientCompanyName,
+            issueDate: invoices.issueDate,
+            totalAmount: getInvoiceRevenueSql(),
+          })
+          .from(invoices)
+          .leftJoin(services, eq(services.invoiceId, invoices.id))
+          .where(eq(invoices.companyId, companyId))
+          .groupBy(
+            invoices.id,
+            invoices.invoiceNo,
+            invoices.clientCompanyName,
+            invoices.issueDate,
+            invoices.updatedAt,
+            invoices.createdAt,
+          )
+          .orderBy(desc(invoices.updatedAt), desc(invoices.createdAt))
+          .limit(5),
+      ]);
+
+      const invoiceSummary = invoiceSummaryRows[0] ?? { totalInvoices: 0, uniqueClients: 0 };
+      const revenueSummary = revenueRows[0] ?? { totalRevenue: 0 };
+
+      res.json({
+        totalInvoices: Number(invoiceSummary.totalInvoices ?? 0),
+        uniqueClients: Number(invoiceSummary.uniqueClients ?? 0),
+        totalRevenue: Number(revenueSummary.totalRevenue ?? 0),
+        recentInvoices: recentInvoiceRows.map((invoice) => ({
+          ...invoice,
+          totalAmount: Number(invoice.totalAmount ?? 0),
+        })),
+      });
+    } catch (error) {
+      handleRouteError(res, error, "Failed to fetch dashboard data");
+    }
+  });
+
   app.delete("/api/settings/logos/:kind", async (req, res) => {
     const session = await getAuthenticatedSession(req, res);
     if (!session) {
@@ -2173,29 +2270,17 @@ async function startServer() {
       const where = buildInvoiceListWhere(access.activeMembership.companyId);
       const allInvoices = await db.query.invoices.findMany({
         ...(where ? { where } : {}),
-        with: {
-          company: {
-            columns: {
-              id: true,
-              name: true,
-              email: true,
-              phone: true,
-              poBox: true,
-              streetAddress: true,
-              standNumber: true,
-              documentLogoUrl: true,
-              bankName: true,
-              accountHolder: true,
-              accountNumber: true,
-              accountType: true,
-              branchCode: true,
-            },
-          },
-          services: true,
+        columns: {
+          id: true,
+          invoiceNo: true,
+          clientCompanyName: true,
+          issueDate: true,
+          dueDate: true,
         },
+        orderBy: [desc(invoices.updatedAt), desc(invoices.createdAt)],
       });
 
-      res.json(allInvoices.map((invoice) => serializeInvoiceRecord(invoice)));
+      res.json(allInvoices);
     } catch (error) {
       handleRouteError(res, error, "Failed to fetch invoices");
     }
@@ -2484,6 +2569,33 @@ async function startServer() {
     } catch (error) {
       handleRouteError(res, error, "Failed to delete invoice");
     }
+  });
+
+  app.use("/company/setup", async (req, res, next) => {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      next();
+      return;
+    }
+
+    const session = await getOptionalSession(req);
+    if (!session) {
+      next();
+      return;
+    }
+
+    try {
+      const access = await getCompanyAccessContext(session.user.id);
+      if (access.memberships.length > 0) {
+        res.redirect(302, "/");
+        return;
+      }
+    } catch (error) {
+      console.error("Failed to enforce company setup route", error);
+      res.status(500).send("Failed to resolve company setup access");
+      return;
+    }
+
+    next();
   });
 
   if (process.env.NODE_ENV !== "production") {

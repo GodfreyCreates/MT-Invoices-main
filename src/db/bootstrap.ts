@@ -160,6 +160,10 @@ const runtimeMigrationStatements = [
     CREATE INDEX IF NOT EXISTS "invoices_company_id_idx" ON "invoices" ("company_id")
   `,
   `
+    CREATE INDEX IF NOT EXISTS "invoices_company_updated_at_idx"
+    ON "invoices" ("company_id", "updated_at" DESC, "created_at" DESC)
+  `,
+  `
     CREATE TABLE IF NOT EXISTS "user_invitations" (
       "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       "email" text NOT NULL,

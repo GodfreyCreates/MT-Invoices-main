@@ -13,11 +13,17 @@ export function ProtectedRoute({
   const location = useLocation();
   const { data: session, isPending } = authClient.useSession();
   const workspace = useWorkspace();
+  const hasWorkspaceData =
+    workspace.companies.length > 0 ||
+    Boolean(workspace.activeCompany) ||
+    (workspace.allCompanies?.length ?? 0) > 0;
+  const isResolvingAuth = isPending && !session;
+  const isResolvingWorkspace = Boolean(session) && !workspace.isReady;
 
-  if (isPending || (session && workspace.isLoading)) {
+  if (isResolvingAuth || isResolvingWorkspace) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-gray-500 font-medium">Loading...</div>
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <div className="text-sm font-medium text-muted-foreground">Loading...</div>
       </div>
     );
   }
@@ -32,12 +38,12 @@ export function ProtectedRoute({
     );
   }
 
-  if (workspace.error) {
+  if (workspace.error && !hasWorkspaceData) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
-        <div className="max-w-md rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
-          <h1 className="text-xl font-semibold text-slate-900">Workspace unavailable</h1>
-          <p className="mt-2 text-sm text-slate-500">
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <div className="max-w-md rounded-2xl border border-border bg-card p-6 text-center shadow-sm">
+          <h1 className="text-xl font-semibold text-card-foreground">Workspace unavailable</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
             {workspace.error}
           </p>
         </div>

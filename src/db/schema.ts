@@ -62,6 +62,7 @@ export const invoices = pgTable('invoices', {
 }, (table) => [
   index('invoices_user_id_idx').on(table.userId),
   index('invoices_company_id_idx').on(table.companyId),
+  index('invoices_company_updated_at_idx').on(table.companyId, table.updatedAt, table.createdAt),
   uniqueIndex('invoices_verification_token_idx').on(table.verificationToken),
 ]);
 
