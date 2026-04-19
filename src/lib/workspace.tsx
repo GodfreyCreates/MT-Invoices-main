@@ -35,8 +35,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
   const loadedSessionKeyRef = useRef<string | null>(null);
-  const sessionUserId = session?.user.id ?? null;
-  const sessionUserRole = session?.user.role ?? null;
+  const sessionUserId = session?.user?.id ?? null;
+  const sessionUserRole = session?.user?.role ?? null;
   const sessionKey = sessionUserId ?? '__anonymous__';
 
   const refreshWorkspace = useCallback(async () => {

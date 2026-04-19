@@ -763,8 +763,8 @@ export function SettingsPage() {
     );
   }
 
-  const displayName = summary.profile.name || session?.user.name || 'User';
-  const displayEmail = summary.profile.email || session?.user.email || '';
+  const displayName = summary.profile.name || session?.user?.name || 'User';
+  const displayEmail = summary.profile.email || session?.user?.email || '';
   const initials = getInitials(displayName, displayEmail);
   const canManageSiteBranding = summary.permissions.canManageSiteBranding;
   const contentGridClassName = canManageSiteBranding
