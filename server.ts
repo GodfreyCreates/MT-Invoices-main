@@ -112,11 +112,20 @@ type HealthDiagnostic = {
       ok: boolean;
       missing: string[];
     };
+    uploadthing: {
+      ok: boolean;
+      configured: boolean;
+      message?: string;
+    };
   };
 };
 type ApiErrorResponse = {
   error: string;
   requestId?: string;
+};
+type UploadthingRouteState = {
+  enabled: boolean;
+  errorMessage?: string;
 };
 type CompanyAccessMembership = {
   id: string;
@@ -1420,6 +1429,14 @@ function getMissingRequiredEnvVars() {
   });
 }
 
+function getHealthStatus(requiredEnvOk: boolean, uploadthingOk: boolean): HealthDiagnostic["status"] {
+  if (requiredEnvOk && uploadthingOk) {
+    return "ok";
+  }
+
+  return "degraded";
+}
+
 function getRequestId(req: Request) {
   const requestIdHeader = req.headers["x-request-id"];
   if (typeof requestIdHeader === "string" && requestIdHeader.trim()) {
@@ -1435,6 +1452,26 @@ function getRequestId(req: Request) {
 
 function getApiErrorResponse(errorMessage: string, requestId?: string): ApiErrorResponse {
   return requestId ? { error: errorMessage, requestId } : { error: errorMessage };
+}
+
+function getUploadthingRouteState(): UploadthingRouteState {
+  try {
+    const token = process.env.UPLOADTHING_TOKEN?.trim();
+    if (!token) {
+      return {
+        enabled: false,
+        errorMessage: "UploadThing is not configured on this deployment",
+      };
+    }
+
+    return { enabled: true };
+  } catch (error) {
+    console.error("Failed to resolve UploadThing route state", error);
+    return {
+      enabled: false,
+      errorMessage: "UploadThing initialization failed",
+    };
+  }
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<Express> {
@@ -1459,7 +1496,32 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
     res.status(400).json(getApiErrorResponse("Invalid JSON payload", requestId));
   });
 
-  app.use("/api/uploadthing", createUploadthingRouteHandler({ router: uploadRouter }));
+  const uploadthingRouteState = getUploadthingRouteState();
+  if (uploadthingRouteState.enabled) {
+    try {
+      app.use("/api/uploadthing", createUploadthingRouteHandler({ router: uploadRouter }));
+    } catch (error) {
+      const fallbackErrorMessage = "UploadThing initialization failed";
+      console.error(fallbackErrorMessage, error);
+      app.use("/api/uploadthing", (req, res) => {
+        const requestId = getRequestId(req);
+        res.status(503).json(getApiErrorResponse(fallbackErrorMessage, requestId));
+      });
+    }
+  } else {
+    app.use("/api/uploadthing", (req, res) => {
+      const requestId = getRequestId(req);
+      console.error(
+        `[${requestId}] UploadThing route disabled: ${uploadthingRouteState.errorMessage ?? "unknown error"}`,
+      );
+      res.status(503).json(
+        getApiErrorResponse(
+          uploadthingRouteState.errorMessage ?? "UploadThing route unavailable",
+          requestId,
+        ),
+      );
+    });
+  }
 
   const authHandler = toNodeHandler(auth);
 
@@ -1491,13 +1553,21 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
 
   app.get("/api/health", (_req, res) => {
     const missingRequiredEnvVars = getMissingRequiredEnvVars();
+    const uploadthingState = getUploadthingRouteState();
+    const requiredEnvOk = missingRequiredEnvVars.length === 0;
+    const uploadthingOk = uploadthingState.enabled;
     const health: HealthDiagnostic = {
-      status: missingRequiredEnvVars.length === 0 ? "ok" : "degraded",
+      status: getHealthStatus(requiredEnvOk, uploadthingOk),
       timestamp: new Date().toISOString(),
       checks: {
         requiredEnv: {
-          ok: missingRequiredEnvVars.length === 0,
+          ok: requiredEnvOk,
           missing: missingRequiredEnvVars,
+        },
+        uploadthing: {
+          ok: uploadthingOk,
+          configured: uploadthingState.enabled,
+          ...(uploadthingState.errorMessage ? { message: uploadthingState.errorMessage } : {}),
         },
       },
     };
