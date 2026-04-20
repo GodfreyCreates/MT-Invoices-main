@@ -20,7 +20,11 @@ TRUSTED_ORIGINS=http://localhost:3000
 
 `TRUSTED_ORIGINS` is optional and accepts a comma-separated list of additional absolute origins for true cross-origin auth callers.
 
-`APP_URL` is still accepted as a deprecated fallback for one transition window, but new deployments should use `APP_URL`.
+`SITE_URL` is still accepted as a deprecated fallback for one transition window, but new deployments should use `APP_URL`.
+
+For production domains, the auth host allow-list now also accepts common apex/`www` aliases automatically (for example, configuring `app.example.com` also allows `www.app.example.com`).
+
+This project also enforces support for `mt-invoices-main.vercel.app`, `app.mtlegacylogistics.co.za`, and `invoice.godfreysiaga292.workers.dev` in the auth host allow-list.
 
 ## Run Locally
 

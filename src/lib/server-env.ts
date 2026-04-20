@@ -4,6 +4,11 @@ dotenv.config();
 
 const DEFAULT_LOCAL_PORT = '3000';
 const DEFAULT_LOCAL_DEV_HOSTS = ['localhost:5173', '127.0.0.1:5173'] as const;
+const REQUIRED_PRODUCTION_HOSTS = [
+  'mt-invoices-main.vercel.app',
+  'app.mtlegacylogistics.co.za',
+  'invoice.godfreysiaga292.workers.dev',
+] as const;
 
 let hasWarnedAboutSiteUrl = false;
 
@@ -45,6 +50,28 @@ function normalizeHostPattern(value: string, envName: string) {
   return trimmedValue;
 }
 
+function addHostWithAliases(target: Set<string>, hostPattern: string) {
+  const normalizedHostPattern = hostPattern.trim().toLowerCase();
+  if (!normalizedHostPattern) {
+    return;
+  }
+
+  target.add(normalizedHostPattern);
+
+  // Include common apex/www host variants to reduce production auth lockouts
+  // when requests arrive on an equivalent domain alias.
+  if (!normalizedHostPattern.includes(':') && !normalizedHostPattern.includes('*')) {
+    if (normalizedHostPattern.startsWith('www.')) {
+      const apexHost = normalizedHostPattern.slice(4);
+      if (apexHost) {
+        target.add(apexHost);
+      }
+    } else {
+      target.add(`www.${normalizedHostPattern}`);
+    }
+  }
+}
+
 function getVercelRequestHosts() {
   const hosts = new Set<string>();
   const vercelHostVariables = ['VERCEL_BRANCH_URL', 'VERCEL_URL'] as const;
@@ -55,22 +82,22 @@ function getVercelRequestHosts() {
       continue;
     }
 
-    hosts.add(normalizeHostPattern(value, envName));
+    addHostWithAliases(hosts, normalizeHostPattern(value, envName));
   }
 
   return Array.from(hosts);
 }
 
 function getDeprecatedSiteUrlOrigin() {
-  const siteUrl = getEnvValue('APP_URL');
+  const siteUrl = getEnvValue('SITE_URL');
   if (!siteUrl) {
     return null;
   }
 
-  const origin = normalizeOrigin(siteUrl, 'APP_URL');
+  const origin = normalizeOrigin(siteUrl, 'SITE_URL');
   if (!hasWarnedAboutSiteUrl) {
     hasWarnedAboutSiteUrl = true;
-    console.warn('APP_URL is deprecated. Set APP_URL instead.');
+    console.warn('SITE_URL is deprecated. Set APP_URL instead.');
   }
 
   return origin;
@@ -137,13 +164,17 @@ export function getAuthAllowedHosts() {
   const extraHosts = getEnvValue('AUTH_ALLOWED_HOSTS');
 
   if (publicAppOrigin) {
-    hosts.add(new URL(publicAppOrigin).host);
+    addHostWithAliases(hosts, new URL(publicAppOrigin).host);
   }
 
   if (extraHosts) {
     for (const rawHost of extraHosts.split(',')) {
-      hosts.add(normalizeHostPattern(rawHost, 'AUTH_ALLOWED_HOSTS'));
+      addHostWithAliases(hosts, normalizeHostPattern(rawHost, 'AUTH_ALLOWED_HOSTS'));
     }
+  }
+
+  for (const host of REQUIRED_PRODUCTION_HOSTS) {
+    addHostWithAliases(hosts, host);
   }
 
   return Array.from(hosts);
