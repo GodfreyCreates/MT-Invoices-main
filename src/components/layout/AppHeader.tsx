@@ -91,35 +91,35 @@ function CompanySwitcher() {
       <button
         type="button"
         onClick={() => setIsOpen((current) => !current)}
-        className="flex h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-left shadow-sm transition hover:border-indigo-200 hover:bg-slate-50"
+        className="flex h-10 items-center gap-2 rounded-2xl border border-border bg-background px-3 text-left shadow-sm transition hover:bg-accent hover:text-accent-foreground"
         aria-haspopup="menu"
         aria-expanded={isOpen}
       >
-        <div className="flex h-7 w-7 items-center justify-center rounded-xl bg-slate-900 text-white shadow-sm">
+        <div className="flex h-7 w-7 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
           <Building2 className="h-4 w-4" />
         </div>
         <div className="hidden min-w-0 sm:block">
-          <p className="truncate text-sm font-semibold text-slate-900">
+          <p className="truncate text-sm font-semibold text-foreground">
             {activeCompany?.name ?? 'Company'}
           </p>
           {activeRoleLabel ? (
-            <p className="truncate text-[11px] uppercase tracking-[0.16em] text-slate-500">
+            <p className="truncate text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
               {activeRoleLabel}
             </p>
           ) : null}
         </div>
         <ChevronDown
-          className={`h-4 w-4 text-slate-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+          className={`h-4 w-4 text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`}
         />
       </button>
 
       {isOpen ? (
-        <div className="absolute right-0 top-[calc(100%+0.75rem)] z-50 w-[20rem] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_60px_-24px_rgba(15,23,42,0.35)]">
-          <div className="border-b border-slate-200 bg-gradient-to-br from-slate-50 via-white to-indigo-50 px-4 py-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+        <div className="absolute right-0 top-[calc(100%+0.75rem)] z-50 w-[20rem] overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground shadow-lg">
+          <div className="border-b border-border bg-muted/40 px-4 py-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
               Active company
             </p>
-            <p className="mt-2 text-base font-semibold tracking-tight text-slate-950">
+            <p className="mt-2 text-base font-semibold tracking-tight text-popover-foreground">
               {activeCompany?.name ?? 'Select a company'}
             </p>
           </div>
@@ -135,13 +135,13 @@ function CompanySwitcher() {
                   onClick={() => void handleSwitchCompany(company.id)}
                   className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-3 text-left transition ${
                     isActive
-                      ? 'bg-indigo-50 text-indigo-700'
-                      : 'text-slate-700 hover:bg-slate-100'
+                      ? 'bg-accent text-accent-foreground'
+                      : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
                   }`}
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold">{company.name}</p>
-                    <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                    <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
                       {getCompanyRoleLabel(company.membershipRole)} · {company.memberCount} member
                       {company.memberCount === 1 ? '' : 's'}
                     </p>
@@ -156,14 +156,14 @@ function CompanySwitcher() {
             })}
           </div>
 
-          <div className="border-t border-slate-200 p-2">
+          <div className="border-t border-border p-2">
             <button
               type="button"
               onClick={() => {
                 setIsOpen(false);
                 navigate('/companies');
               }}
-              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-muted-foreground transition hover:bg-accent hover:text-accent-foreground"
             >
               <Plus className="h-4 w-4" />
               Create company
@@ -174,7 +174,7 @@ function CompanySwitcher() {
                 setIsOpen(false);
                 navigate('/companies');
               }}
-              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-muted-foreground transition hover:bg-accent hover:text-accent-foreground"
             >
               <Building2 className="h-4 w-4" />
               Manage companies
@@ -227,6 +227,7 @@ export function AppHeader({
       }
       user={session?.user}
       canAccessCompanies={showCompanyControls}
+      canAccessClients={Boolean(workspace.activeCompany)}
       onSignOut={handleSignOut}
       showPrimaryLinks={showPrimaryLinks}
       right={

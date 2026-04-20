@@ -24,7 +24,7 @@ import {
   deleteImageFromStorage,
   ensureAppStorageBucket,
 } from "./src/lib/storage-server";
-import { companies, companyMemberships, invoices, services, userInvitations } from "./src/db/schema";
+import { companies, companyMemberships, invoices, savedClients, services, userInvitations } from "./src/db/schema";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -73,6 +73,7 @@ type SanitizedServiceInput = {
 };
 type SanitizedInvoiceInput = {
   id?: Uuid;
+  savedClientId?: Uuid | null;
   invoice: {
     clientCompanyName: string;
     clientEmail: string;
@@ -90,6 +91,31 @@ type SanitizedInvoiceInput = {
     authorizedSignature: string;
   };
   services: SanitizedServiceInput[];
+};
+type SavedClientRecord = {
+  id: string;
+  clientCompanyName: string;
+  clientEmail: string;
+  clientPhone: string;
+  clientStreet: string;
+  clientHouseNumber: string;
+  clientCity: string;
+  clientPostalCode: string;
+  invoiceCount?: number;
+  lastInvoiceAt?: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  lastUsedAt: Date | null;
+};
+type SanitizedSavedClientInput = {
+  id?: Uuid;
+  clientCompanyName: string;
+  clientEmail: string;
+  clientPhone: string;
+  clientStreet: string;
+  clientHouseNumber: string;
+  clientCity: string;
+  clientPostalCode: string;
 };
 type InviteUserRole = "admin" | "user";
 type CompanyMembershipRole = CompanyRole;
@@ -364,6 +390,18 @@ function getHeaderValue(value: string | string[] | undefined) {
   }
 
   return value;
+}
+
+function getOptionalUuidValue(value: unknown, field: string) {
+  if (value == null || value === "") {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    throw new HttpError(400, `${field} must be a string`);
+  }
+
+  return requireUuid(value.trim(), field);
 }
 
 function normalizeIpAddress(value: string | undefined | null) {
@@ -989,6 +1027,7 @@ function parseInvoiceInput(value: unknown): SanitizedInvoiceInput {
 
   return {
     id,
+    savedClientId: getOptionalUuidValue(payload.savedClientId, "savedClientId"),
     invoice: {
       clientCompanyName: getTrimmedString(payload.clientCompanyName, "clientCompanyName", { maxLength: 200 }),
       clientEmail: getEmail(payload.clientEmail, "clientEmail"),
@@ -1006,6 +1045,39 @@ function parseInvoiceInput(value: unknown): SanitizedInvoiceInput {
       authorizedSignature: getTrimmedString(payload.authorizedSignature, "authorizedSignature", { maxLength: 120 }),
     },
     services: rawServices.map((service, index) => parseServiceInput(service, index)),
+  };
+}
+
+function parseSavedClientInput(value: unknown): SanitizedSavedClientInput {
+  const payload = getRecord(value, "request body");
+
+  return {
+    id: getOptionalUuidValue(payload.id, "id") ?? undefined,
+    clientCompanyName: getTrimmedString(payload.clientCompanyName, "clientCompanyName", { maxLength: 200 }),
+    clientEmail: getEmail(payload.clientEmail, "clientEmail"),
+    clientPhone: getTrimmedString(payload.clientPhone, "clientPhone", { maxLength: 50 }),
+    clientStreet: getTrimmedString(payload.clientStreet, "clientStreet", { maxLength: 200 }),
+    clientHouseNumber: getTrimmedString(payload.clientHouseNumber, "clientHouseNumber", { maxLength: 100 }),
+    clientCity: getTrimmedString(payload.clientCity, "clientCity", { maxLength: 120 }),
+    clientPostalCode: getTrimmedString(payload.clientPostalCode, "clientPostalCode", { maxLength: 20 }),
+  };
+}
+
+function serializeSavedClientRecord(client: SavedClientRecord) {
+  return {
+    id: client.id,
+    clientCompanyName: client.clientCompanyName,
+    clientEmail: client.clientEmail,
+    clientPhone: client.clientPhone,
+    clientStreet: client.clientStreet,
+    clientHouseNumber: client.clientHouseNumber,
+    clientCity: client.clientCity,
+    clientPostalCode: client.clientPostalCode,
+    invoiceCount: client.invoiceCount ?? 0,
+    lastInvoiceAt: client.lastInvoiceAt?.toISOString() ?? null,
+    createdAt: client.createdAt.toISOString(),
+    updatedAt: client.updatedAt.toISOString(),
+    lastUsedAt: client.lastUsedAt?.toISOString() ?? null,
   };
 }
 
@@ -2165,6 +2237,256 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
     }
   });
 
+  app.get("/api/clients", async (req, res) => {
+    const session = await getAuthenticatedSession(req, res);
+    if (!session) {
+      return;
+    }
+
+    try {
+      const access = await getRequiredActiveCompanyContext(session.user.id);
+      const clientRecords = await db
+        .select({
+          id: savedClients.id,
+          clientCompanyName: savedClients.clientCompanyName,
+          clientEmail: savedClients.clientEmail,
+          clientPhone: savedClients.clientPhone,
+          clientStreet: savedClients.clientStreet,
+          clientHouseNumber: savedClients.clientHouseNumber,
+          clientCity: savedClients.clientCity,
+          clientPostalCode: savedClients.clientPostalCode,
+          invoiceCount: count(invoices.id),
+          lastInvoiceAt: sql<Date | null>`max(${invoices.updatedAt})`,
+          createdAt: savedClients.createdAt,
+          updatedAt: savedClients.updatedAt,
+          lastUsedAt: savedClients.lastUsedAt,
+        })
+        .from(savedClients)
+        .leftJoin(invoices, eq(invoices.savedClientId, savedClients.id))
+        .where(eq(savedClients.companyId, access.activeMembership.companyId))
+        .groupBy(
+          savedClients.id,
+          savedClients.clientCompanyName,
+          savedClients.clientEmail,
+          savedClients.clientPhone,
+          savedClients.clientStreet,
+          savedClients.clientHouseNumber,
+          savedClients.clientCity,
+          savedClients.clientPostalCode,
+          savedClients.createdAt,
+          savedClients.updatedAt,
+          savedClients.lastUsedAt,
+        )
+        .orderBy(
+          sql`count(${invoices.id}) desc`,
+          sql`max(${invoices.updatedAt}) desc nulls last`,
+          sql`${savedClients.lastUsedAt} desc nulls last`,
+          asc(savedClients.clientCompanyName),
+          desc(savedClients.updatedAt),
+        );
+
+      res.json(clientRecords.map((client) => serializeSavedClientRecord(client)));
+    } catch (error) {
+      handleRouteError(res, error, "Failed to fetch saved clients");
+    }
+  });
+
+  app.post("/api/clients", async (req, res) => {
+    const session = await getAuthenticatedSession(req, res);
+    if (!session) {
+      return;
+    }
+
+    try {
+      const access = await getRequiredActiveCompanyContext(session.user.id);
+      const payload = parseSavedClientInput(req.body);
+      const now = new Date();
+      const clientId = payload.id ?? createUuid();
+
+      if (payload.id) {
+        const [updatedClient] = await db
+          .update(savedClients)
+          .set({
+            clientCompanyName: payload.clientCompanyName,
+            clientEmail: payload.clientEmail,
+            clientPhone: payload.clientPhone,
+            clientStreet: payload.clientStreet,
+            clientHouseNumber: payload.clientHouseNumber,
+            clientCity: payload.clientCity,
+            clientPostalCode: payload.clientPostalCode,
+            lastUsedAt: now,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(savedClients.id, clientId),
+              eq(savedClients.companyId, access.activeMembership.companyId),
+            ),
+          )
+          .returning({
+            id: savedClients.id,
+            clientCompanyName: savedClients.clientCompanyName,
+            clientEmail: savedClients.clientEmail,
+            clientPhone: savedClients.clientPhone,
+            clientStreet: savedClients.clientStreet,
+            clientHouseNumber: savedClients.clientHouseNumber,
+            clientCity: savedClients.clientCity,
+            clientPostalCode: savedClients.clientPostalCode,
+            createdAt: savedClients.createdAt,
+            updatedAt: savedClients.updatedAt,
+            lastUsedAt: savedClients.lastUsedAt,
+          });
+
+        if (!updatedClient) {
+          res.status(404).json({ error: "Saved client not found" });
+          return;
+        }
+
+        res.json(serializeSavedClientRecord(updatedClient));
+        return;
+      }
+
+      const [createdClient] = await db
+        .insert(savedClients)
+        .values({
+          id: clientId,
+          companyId: access.activeMembership.companyId,
+          createdByUserId: session.user.id,
+          clientCompanyName: payload.clientCompanyName,
+          clientEmail: payload.clientEmail,
+          clientPhone: payload.clientPhone,
+          clientStreet: payload.clientStreet,
+          clientHouseNumber: payload.clientHouseNumber,
+          clientCity: payload.clientCity,
+          clientPostalCode: payload.clientPostalCode,
+          lastUsedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning({
+          id: savedClients.id,
+          clientCompanyName: savedClients.clientCompanyName,
+          clientEmail: savedClients.clientEmail,
+          clientPhone: savedClients.clientPhone,
+          clientStreet: savedClients.clientStreet,
+          clientHouseNumber: savedClients.clientHouseNumber,
+          clientCity: savedClients.clientCity,
+          clientPostalCode: savedClients.clientPostalCode,
+          createdAt: savedClients.createdAt,
+          updatedAt: savedClients.updatedAt,
+          lastUsedAt: savedClients.lastUsedAt,
+        });
+
+      res.status(201).json(serializeSavedClientRecord(createdClient));
+    } catch (error) {
+      handleRouteError(res, error, "Failed to save client");
+    }
+  });
+
+  app.patch("/api/clients/:id", async (req, res) => {
+    const session = await getAuthenticatedSession(req, res);
+    if (!session) {
+      return;
+    }
+
+    try {
+      const access = await getRequiredActiveCompanyContext(session.user.id);
+      const clientId = requireUuid(req.params.id, "Client id");
+      const payload = parseSavedClientInput(req.body);
+      const now = new Date();
+
+      const [updatedClient] = await db
+        .update(savedClients)
+        .set({
+          clientCompanyName: payload.clientCompanyName,
+          clientEmail: payload.clientEmail,
+          clientPhone: payload.clientPhone,
+          clientStreet: payload.clientStreet,
+          clientHouseNumber: payload.clientHouseNumber,
+          clientCity: payload.clientCity,
+          clientPostalCode: payload.clientPostalCode,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(savedClients.id, clientId),
+            eq(savedClients.companyId, access.activeMembership.companyId),
+          ),
+        )
+        .returning({
+          id: savedClients.id,
+          clientCompanyName: savedClients.clientCompanyName,
+          clientEmail: savedClients.clientEmail,
+          clientPhone: savedClients.clientPhone,
+          clientStreet: savedClients.clientStreet,
+          clientHouseNumber: savedClients.clientHouseNumber,
+          clientCity: savedClients.clientCity,
+          clientPostalCode: savedClients.clientPostalCode,
+          createdAt: savedClients.createdAt,
+          updatedAt: savedClients.updatedAt,
+          lastUsedAt: savedClients.lastUsedAt,
+        });
+
+      if (!updatedClient) {
+        res.status(404).json({ error: "Saved client not found" });
+        return;
+      }
+
+      await db
+        .update(invoices)
+        .set({
+          clientCompanyName: payload.clientCompanyName,
+          clientEmail: payload.clientEmail,
+          clientPhone: payload.clientPhone,
+          clientStreet: payload.clientStreet,
+          clientHouseNumber: payload.clientHouseNumber,
+          clientCity: payload.clientCity,
+          clientPostalCode: payload.clientPostalCode,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(invoices.savedClientId, clientId),
+            eq(invoices.companyId, access.activeMembership.companyId),
+          ),
+        );
+
+      res.json(serializeSavedClientRecord(updatedClient));
+    } catch (error) {
+      handleRouteError(res, error, "Failed to update client");
+    }
+  });
+
+  app.delete("/api/clients/:id", async (req, res) => {
+    const session = await getAuthenticatedSession(req, res);
+    if (!session) {
+      return;
+    }
+
+    try {
+      const access = await getRequiredActiveCompanyContext(session.user.id);
+      const clientId = requireUuid(req.params.id, "Client id");
+      const [deletedClient] = await db
+        .delete(savedClients)
+        .where(
+          and(
+            eq(savedClients.id, clientId),
+            eq(savedClients.companyId, access.activeMembership.companyId),
+          ),
+        )
+        .returning({ id: savedClients.id });
+
+      if (!deletedClient) {
+        res.status(404).json({ error: "Saved client not found" });
+        return;
+      }
+
+      res.status(204).end();
+    } catch (error) {
+      handleRouteError(res, error, "Failed to delete client");
+    }
+  });
+
   app.patch("/api/companies/:id", async (req, res) => {
     const session = await getAuthenticatedSession(req, res);
     if (!session) {
@@ -2991,6 +3313,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
       let verificationToken = createUuid();
       let ownerId = session.user.id;
       let companyId = access.activeMembership.companyId;
+      let savedClientId = parsedInvoice.savedClientId ?? null;
 
       if (parsedInvoice.id) {
         const existingInvoice = await db.query.invoices.findFirst({
@@ -2998,6 +3321,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
           columns: {
             userId: true,
             companyId: true,
+            savedClientId: true,
             verificationToken: true,
           },
         });
@@ -3010,6 +3334,24 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
         verificationToken = (existingInvoice.verificationToken ?? createUuid()) as Uuid;
         ownerId = existingInvoice.userId ?? session.user.id;
         companyId = existingInvoice.companyId ?? access.activeMembership.companyId;
+        savedClientId = parsedInvoice.savedClientId ?? null;
+      }
+
+      if (savedClientId) {
+        const [savedClient] = await db
+          .select({ id: savedClients.id })
+          .from(savedClients)
+          .where(
+            and(
+              eq(savedClients.id, savedClientId),
+              eq(savedClients.companyId, access.activeMembership.companyId),
+            ),
+          )
+          .limit(1);
+
+        if (!savedClient) {
+          throw new HttpError(404, "Saved client not found");
+        }
       }
 
       const serviceRows = parsedInvoice.services.map((service) => ({
@@ -3025,6 +3367,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
             ...parsedInvoice.invoice,
             userId: ownerId,
             companyId,
+            savedClientId,
             verificationToken,
             updatedAt: new Date(),
           })
@@ -3038,12 +3381,35 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
           id: invoiceId,
           userId: ownerId,
           companyId,
+          savedClientId,
           verificationToken,
           ...parsedInvoice.invoice,
         });
         if (serviceRows.length > 0) {
           await db.insert(services).values(serviceRows);
         }
+      }
+
+      if (savedClientId) {
+        await db
+          .update(savedClients)
+          .set({
+            clientCompanyName: parsedInvoice.invoice.clientCompanyName,
+            clientEmail: parsedInvoice.invoice.clientEmail,
+            clientPhone: parsedInvoice.invoice.clientPhone,
+            clientStreet: parsedInvoice.invoice.clientStreet,
+            clientHouseNumber: parsedInvoice.invoice.clientHouseNumber,
+            clientCity: parsedInvoice.invoice.clientCity,
+            clientPostalCode: parsedInvoice.invoice.clientPostalCode,
+            lastUsedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(savedClients.id, savedClientId),
+              eq(savedClients.companyId, access.activeMembership.companyId),
+            ),
+          );
       }
 
       const savedInvoice = await db.query.invoices.findFirst({

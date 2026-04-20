@@ -18,6 +18,7 @@ import { CompaniesPage } from './pages/CompaniesPage';
 import { CompanySetupPage } from './pages/CompanySetupPage';
 import { InvoicePrintPage } from './pages/InvoicePrintPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ClientsPage } from './pages/ClientsPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { ConfirmationProvider } from './components/ui/ConfirmationProvider';
 import { MobileNav } from './components/layout/MobileNav';
@@ -40,6 +41,7 @@ function AppRoutes() {
 
         {/* Protected Routes */}
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+        <Route path="/clients" element={<ProtectedRoute><ClientsPage /></ProtectedRoute>} />
         <Route path="/users" element={<ProtectedRoute requireCompany={false}><UsersPage /></ProtectedRoute>} />
         <Route path="/companies" element={<ProtectedRoute requireCompany={false}><CompaniesPage /></ProtectedRoute>} />
         <Route path="/company/setup" element={<ProtectedRoute requireCompany={false}><CompanySetupPage /></ProtectedRoute>} />

@@ -39,10 +39,32 @@ export const companyMemberships = pgTable('company_memberships', {
   uniqueIndex('company_memberships_company_user_idx').on(table.companyId, table.userId),
 ]);
 
+export const savedClients = pgTable('saved_clients', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  companyId: uuid('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  createdByUserId: text('created_by_user_id').references(() => user.id, { onDelete: 'set null' }),
+  clientCompanyName: text('client_company_name').notNull(),
+  clientEmail: text('client_email').notNull(),
+  clientPhone: text('client_phone').notNull(),
+  clientStreet: text('client_street').notNull(),
+  clientHouseNumber: text('client_house_number').notNull(),
+  clientCity: text('client_city').notNull(),
+  clientPostalCode: text('client_postal_code').notNull(),
+  lastUsedAt: timestamp('last_used_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => [
+  index('saved_clients_company_id_idx').on(table.companyId),
+  index('saved_clients_created_by_user_id_idx').on(table.createdByUserId),
+  index('saved_clients_company_name_idx').on(table.companyId, table.clientCompanyName),
+  index('saved_clients_company_last_used_idx').on(table.companyId, table.lastUsedAt, table.updatedAt),
+]);
+
 export const invoices = pgTable('invoices', {
   id: uuid('id').defaultRandom().primaryKey(),
   userId: text('user_id').references(() => user.id, { onDelete: 'set null' }),
   companyId: uuid('company_id').references(() => companies.id, { onDelete: 'set null' }),
+  savedClientId: uuid('saved_client_id').references(() => savedClients.id, { onDelete: 'set null' }),
   verificationToken: uuid('verification_token').defaultRandom().notNull(),
   clientCompanyName: text('client_company_name').notNull(),
   clientEmail: text('client_email').notNull(),
@@ -63,6 +85,7 @@ export const invoices = pgTable('invoices', {
 }, (table) => [
   index('invoices_user_id_idx').on(table.userId),
   index('invoices_company_id_idx').on(table.companyId),
+  index('invoices_saved_client_id_idx').on(table.savedClientId),
   index('invoices_company_updated_at_idx').on(table.companyId, table.updatedAt, table.createdAt),
   index('invoices_company_user_updated_at_idx').on(table.companyId, table.userId, table.updatedAt, table.createdAt),
   uniqueIndex('invoices_verification_token_idx').on(table.verificationToken),
@@ -113,6 +136,10 @@ export const invoicesRelations = relations(invoices, ({ many, one }) => ({
     fields: [invoices.companyId],
     references: [companies.id],
   }),
+  savedClient: one(savedClients, {
+    fields: [invoices.savedClientId],
+    references: [savedClients.id],
+  }),
 }));
 
 export const servicesRelations = relations(services, ({ one }) => ({
@@ -125,6 +152,7 @@ export const servicesRelations = relations(services, ({ one }) => ({
 export const companiesRelations = relations(companies, ({ many, one }) => ({
   memberships: many(companyMemberships),
   invoices: many(invoices),
+  savedClients: many(savedClients),
   createdBy: one(user, {
     fields: [companies.createdByUserId],
     references: [user.id],
@@ -140,6 +168,18 @@ export const companyMembershipsRelations = relations(companyMemberships, ({ one 
     fields: [companyMemberships.userId],
     references: [user.id],
   }),
+}));
+
+export const savedClientsRelations = relations(savedClients, ({ many, one }) => ({
+  company: one(companies, {
+    fields: [savedClients.companyId],
+    references: [companies.id],
+  }),
+  createdBy: one(user, {
+    fields: [savedClients.createdByUserId],
+    references: [user.id],
+  }),
+  invoices: many(invoices),
 }));
 
 export * from './auth-schema';

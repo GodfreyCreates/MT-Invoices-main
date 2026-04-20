@@ -17,6 +17,7 @@ export interface ServiceRow {
 }
 
 export interface InvoiceData {
+  savedClientId?: string | null;
   // Client Details
   clientCompanyName: string;
   clientEmail: string;
@@ -72,10 +73,27 @@ export type InvoiceCompanyContext = {
   bankBranchCode: string;
 };
 
+export type SavedClientData = {
+  id: string;
+  clientCompanyName: string;
+  clientEmail: string;
+  clientPhone: string;
+  clientStreet: string;
+  clientHouseNumber: string;
+  clientCity: string;
+  clientPostalCode: string;
+  invoiceCount?: number;
+  lastInvoiceAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt: string | null;
+};
+
 interface InvoiceStore {
   data: InvoiceData & { id?: string };
   isSaving: boolean;
   updateField: (field: keyof InvoiceData, value: any) => void;
+  applySavedClient: (client: SavedClientData | null) => void;
   addService: () => void;
   updateService: (id: string, field: keyof ServiceRow, value: any) => void;
   duplicateService: (id: string) => void;
@@ -104,6 +122,7 @@ const defaultService: ServiceRow = {
 export const useInvoiceStore = create<InvoiceStore>((set, get) => ({
   isSaving: false,
   data: {
+    savedClientId: null,
     clientCompanyName: '',
     clientEmail: '',
     clientPhone: '',
@@ -122,6 +141,20 @@ export const useInvoiceStore = create<InvoiceStore>((set, get) => ({
   },
   updateField: (field, value) =>
     set((state) => ({ data: { ...state.data, [field]: value } })),
+  applySavedClient: (client) =>
+    set((state) => ({
+      data: {
+        ...state.data,
+        savedClientId: client?.id ?? null,
+        clientCompanyName: client?.clientCompanyName ?? '',
+        clientEmail: client?.clientEmail ?? '',
+        clientPhone: client?.clientPhone ?? '',
+        clientStreet: client?.clientStreet ?? '',
+        clientHouseNumber: client?.clientHouseNumber ?? '',
+        clientCity: client?.clientCity ?? '',
+        clientPostalCode: client?.clientPostalCode ?? '',
+      },
+    })),
   addService: () =>
     set((state) => ({
       data: {
@@ -166,6 +199,7 @@ export const useInvoiceStore = create<InvoiceStore>((set, get) => ({
     set({
       data: {
         ...data,
+        savedClientId: data.savedClientId ?? null,
         theme: data.theme ?? DEFAULT_INVOICE_THEME,
         authorizedSignature: data.authorizedSignature ?? DEFAULT_AUTHORIZED_SIGNATURE,
       },

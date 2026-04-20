@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Briefcase,
   Building2,
   ChevronDown,
   FileText,
@@ -29,6 +30,7 @@ type HeaderProps = {
   onSignOut?: () => void | Promise<void>;
   showPrimaryLinks?: boolean;
   canAccessCompanies?: boolean;
+  canAccessClients?: boolean;
 };
 
 type HeaderBrandProps = {
@@ -75,6 +77,7 @@ export function Header({
   onSignOut,
   showPrimaryLinks = true,
   canAccessCompanies = false,
+  canAccessClients = false,
 }: HeaderProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -99,6 +102,16 @@ export function Header({
         label: 'Invoices',
         matches: (pathname) => pathname.startsWith('/invoices') || pathname.startsWith('/invoice/'),
       },
+      ...(canAccessClients
+        ? [
+            {
+              href: '/clients',
+              icon: Briefcase,
+              label: 'Clients',
+              matches: (pathname: string) => pathname.startsWith('/clients'),
+            },
+          ]
+        : []),
       {
         href: '/companies',
         icon: Building2,
@@ -122,7 +135,7 @@ export function Header({
           ]
         : []),
     ],
-    [canAccessCompanies, isAdmin],
+    [canAccessClients, canAccessCompanies, isAdmin],
   );
   const visibleMenuLinks = menuLinks.filter(
     (link) => canAccessCompanies || (link.href !== '/companies' && !link.href.startsWith('/company')),
@@ -169,7 +182,7 @@ export function Header({
   return (
     <header 
       className={cn(
-        'sticky inset-x-0 top-0 z-[60] w-full shrink-0 border-b border-gray-200/80 bg-white/95 shadow-[0_4px_20px_-10px_rgba(0,0,0,0.05)] backdrop-blur-xl transition-all duration-300 supports-[backdrop-filter]:bg-white/80',
+        'sticky inset-x-0 top-0 z-[60] w-full shrink-0 border-b border-border bg-background/95 shadow-sm backdrop-blur-xl transition-all duration-300 supports-[backdrop-filter]:bg-background/80',
         className
       )}
     >
@@ -203,22 +216,22 @@ export function Header({
                   onClick={() => setIsMenuOpen((open) => !open)}
                   aria-haspopup="menu"
                   aria-expanded={isMenuOpen}
-                  className="group flex items-center gap-2 rounded-full border border-slate-200/80 bg-white/90 px-2 py-1.5 shadow-sm transition-all duration-200 hover:border-indigo-200 hover:bg-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  className="group flex items-center gap-2 rounded-full border border-border bg-background/90 px-2 py-1.5 shadow-sm transition-all duration-200 hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {user.image ? (
                     <img
                       src={user.image}
                       alt={displayName}
-                      className="h-9 w-9 rounded-full object-cover ring-1 ring-slate-200"
+                      className="h-9 w-9 rounded-full object-cover ring-1 ring-border"
                     />
                   ) : (
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-slate-900 via-indigo-700 to-blue-600 text-sm font-bold text-white shadow-sm">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground shadow-sm">
                       {initials}
                     </div>
                   )}
                   <ChevronDown
                     className={cn(
-                      'hidden h-4 w-4 text-slate-500 transition-transform duration-200 sm:block',
+                      'hidden h-4 w-4 text-muted-foreground transition-transform duration-200 sm:block',
                       isMenuOpen && 'rotate-180',
                     )}
                   />
@@ -227,26 +240,26 @@ export function Header({
                 {isMenuOpen ? (
                   <div
                     role="menu"
-                    className="absolute right-0 top-[calc(100%+0.75rem)] z-50 w-72 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_60px_-24px_rgba(15,23,42,0.35)]"
+                    className="absolute right-0 top-[calc(100%+0.75rem)] z-50 w-72 overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground shadow-lg"
                   >
-                    <div className="border-b border-slate-200 bg-gradient-to-br from-slate-50 via-white to-indigo-50 px-4 py-4">
+                    <div className="border-b border-border bg-muted/40 px-4 py-4">
                       <div className="flex items-start gap-3">
                         {user.image ? (
                           <img
                             src={user.image}
                             alt={displayName}
-                            className="h-12 w-12 rounded-full object-cover ring-1 ring-slate-200"
+                            className="h-12 w-12 rounded-full object-cover ring-1 ring-border"
                           />
                         ) : (
-                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-slate-900 via-indigo-700 to-blue-600 text-base font-bold text-white shadow-sm">
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary text-base font-bold text-primary-foreground shadow-sm">
                             {initials}
                           </div>
                         )}
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-semibold text-slate-900">{displayName}</p>
-                          <p className="mt-1 truncate text-xs text-slate-500">{displayEmail}</p>
+                          <p className="truncate text-sm font-semibold text-popover-foreground">{displayName}</p>
+                          <p className="mt-1 truncate text-xs text-muted-foreground">{displayEmail}</p>
                           {displayRole ? (
-                            <div className="mt-3 inline-flex items-center gap-1 rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-widest text-indigo-700">
+                            <div className="mt-3 inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2.5 py-1 text-[11px] font-semibold uppercase tracking-widest text-primary">
                               <ShieldCheck className="h-3.5 w-3.5" />
                               {displayRole}
                             </div>
@@ -255,7 +268,7 @@ export function Header({
                       </div>
                     </div>
 
-                    <div className="hidden border-b border-slate-200 p-2 sm:block">
+                    <div className="border-b border-border p-2">
                       {visibleMenuLinks.map((link) => {
                         const isActive = link.matches(location.pathname);
 
@@ -266,10 +279,10 @@ export function Header({
                             role="menuitem"
                             onClick={() => handleNavigate(link.href)}
                             className={cn(
-                              'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
+                              'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                               isActive
-                                ? 'bg-indigo-50 text-indigo-700'
-                                : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900',
+                                ? 'bg-accent text-accent-foreground'
+                                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
                             )}
                           >
                             <link.icon className="h-4 w-4" />
@@ -284,7 +297,7 @@ export function Header({
                         type="button"
                         role="menuitem"
                         onClick={handleSignOut}
-                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition-colors hover:bg-red-50 hover:text-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         <LogOut className="h-4 w-4" />
                         Log out
@@ -312,16 +325,16 @@ export function HeaderBrand({
     <div className={cn('group flex min-w-0 items-center gap-3 md:gap-3.5', className)}>
       <div
         className={cn(
-          'relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl text-white font-bold shadow-md ring-1 transition-all duration-300 ease-out group-hover:shadow-lg group-hover:scale-105 group-hover:-rotate-2 sm:h-11 sm:w-11',
+          'relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl font-bold shadow-md ring-1 transition-all duration-300 ease-out group-hover:shadow-lg group-hover:scale-105 group-hover:-rotate-2 sm:h-11 sm:w-11',
           logoSrc
-            ? 'bg-white ring-slate-200'
-            : 'bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-700 ring-white/10',
+            ? 'bg-background ring-border'
+            : 'bg-primary text-primary-foreground ring-border',
         )}
       >
         <div
           className={cn(
             'absolute inset-0 translate-y-full transition-transform duration-500 ease-out group-hover:translate-y-0',
-            logoSrc ? 'bg-slate-900/5' : 'bg-white/20',
+            logoSrc ? 'bg-foreground/5' : 'bg-foreground/10',
           )}
         />
         {logoSrc ? (
@@ -342,11 +355,11 @@ export function HeaderBrand({
 export function HeaderTitle({ title, subtitle, className }: HeaderTitleProps) {
   return (
     <div className={cn('flex flex-col min-w-0 justify-center translate-y-[1px]', className)}>
-      <span className="truncate text-base sm:text-lg font-bold text-slate-800 tracking-tight leading-none group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-blue-700 group-hover:to-indigo-700 transition-all duration-300">
+      <span className="truncate text-base font-bold tracking-tight leading-none text-foreground transition-colors duration-300 sm:text-lg">
         {title}
       </span>
       {subtitle && (
-        <span className="mt-1 sm:mt-1.5 truncate text-[10px] sm:text-[11px] font-bold uppercase tracking-widest text-indigo-600/90 transition-colors duration-300 group-hover:text-indigo-500">
+        <span className="mt-1 truncate text-[10px] font-bold uppercase tracking-widest text-primary transition-colors duration-300 sm:mt-1.5 sm:text-[11px]">
           {subtitle}
         </span>
       )}

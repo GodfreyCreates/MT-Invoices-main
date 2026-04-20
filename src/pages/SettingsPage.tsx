@@ -12,15 +12,25 @@ import {
   Smartphone,
   Trash2,
   UserRound,
+  Users,
   X,
+  Building2,
+  Check,
 } from 'lucide-react';
 import { AppHeader } from '../components/layout/AppHeader';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Label } from '../components/ui/Label';
+import { CompanyProfileForm } from '../components/company/CompanyProfileForm';
 import { ApiError, apiRequest } from '../lib/api';
 import { authClient } from '../lib/auth-client';
 import { useBranding } from '../lib/branding';
+import {
+  getCompanyRoleLabel,
+  type ActiveCompanySummary,
+  type CompanyMember,
+  type CompanyFormValues,
+} from '../lib/company';
 import {
   createSupabaseFunctionHeaders,
   getSupabaseFunctionUrl,
@@ -55,6 +65,15 @@ type SettingsSummary = {
   permissions: {
     canManageSiteBranding: boolean;
   };
+  activeCompany: ActiveCompanySummary | null;
+  companyMembers: CompanyMember[];
+};
+
+type CompanyLogoMutationResponse = {
+  target: 'company-logo';
+  publicUrl: string | null;
+  objectPath: string | null;
+  companyId: string;
 };
 
 type SessionItem = {
@@ -367,6 +386,9 @@ export function SettingsPage() {
   const [isPasswordSaving, setIsPasswordSaving] = useState(false);
   const [isRemovingSiteLogo, setIsRemovingSiteLogo] = useState(false);
   const [isUploadingSiteLogo, setIsUploadingSiteLogo] = useState(false);
+  const [isRemovingCompanyLogo, setIsRemovingCompanyLogo] = useState(false);
+  const [isUploadingCompanyLogo, setIsUploadingCompanyLogo] = useState(false);
+  const [isSavingCompany, setIsSavingCompany] = useState(false);
   const [isRevokingOthers, setIsRevokingOthers] = useState(false);
   const [sessionActionToken, setSessionActionToken] = useState<string | null>(null);
   const [selectedSession, setSelectedSession] = useState<SessionItem | null>(null);
@@ -376,9 +398,12 @@ export function SettingsPage() {
     confirmPassword: '',
     revokeOtherSessions: true,
   });
+  const [companyForm, setCompanyForm] = useState<CompanyFormValues | null>(null);
   const [siteLogoUploadProgress, setSiteLogoUploadProgress] = useState(0);
+  const [companyLogoUploadProgress, setCompanyLogoUploadProgress] = useState(0);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(session?.session?.id ?? null);
   const siteLogoInputRef = useRef<HTMLInputElement | null>(null);
+  const companyLogoInputRef = useRef<HTMLInputElement | null>(null);
   const hasLoadedSummaryRef = useRef(false);
   const hasLoadedSessionsRef = useRef(false);
 
@@ -388,6 +413,21 @@ export function SettingsPage() {
     try {
       const next = await apiRequest<SettingsSummary>('/api/settings/summary');
       setSummary(next);
+      if (next.activeCompany) {
+        setCompanyForm({
+          name: next.activeCompany.name,
+          email: next.activeCompany.email,
+          phone: next.activeCompany.phone,
+          poBox: next.activeCompany.poBox ?? '',
+          streetAddress: next.activeCompany.streetAddress,
+          standNumber: next.activeCompany.standNumber ?? '',
+          bankName: next.activeCompany.bankName,
+          accountHolder: next.activeCompany.accountHolder,
+          accountNumber: next.activeCompany.accountNumber,
+          accountType: next.activeCompany.accountType,
+          branchCode: next.activeCompany.branchCode,
+        });
+      }
       hasLoadedSummaryRef.current = true;
     } catch (error) {
       const message = error instanceof ApiError ? error.message : 'Failed to load settings';
@@ -532,6 +572,80 @@ export function SettingsPage() {
       toast.error(error instanceof ApiError ? error.message : 'Unable to remove site logo');
     } finally {
       setIsRemovingSiteLogo(false);
+    }
+  };
+
+  const handleCompanyLogoSelection = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const files = input.files ? (Array.from(input.files) as File[]) : [];
+    input.value = '';
+    if (files.length === 0) return;
+    const [file] = files;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please choose an image file');
+      return;
+    }
+    try {
+      const accessToken = await getSupabaseAccessToken();
+      if (!accessToken) throw new Error('You must be signed in to upload');
+      if (!summary?.activeCompany?.id) throw new Error('No active company found');
+
+      setIsUploadingCompanyLogo(true);
+      await uploadFileToApi<CompanyLogoMutationResponse>({
+        url: getSupabaseFunctionUrl('auth-storage-images'),
+        file,
+        accessToken,
+        fields: { target: 'company-logo', companyId: summary.activeCompany.id },
+        headers: createSupabaseFunctionHeaders(),
+        onProgress: setCompanyLogoUploadProgress,
+      });
+      setCompanyLogoUploadProgress(100);
+      await Promise.all([loadSummary(), workspace.refreshWorkspace()]);
+      toast.success('Company logo updated');
+      window.setTimeout(() => setCompanyLogoUploadProgress(0), 600);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Upload failed');
+      setCompanyLogoUploadProgress(0);
+    } finally {
+      setIsUploadingCompanyLogo(false);
+    }
+  };
+
+  const handleRemoveCompanyLogo = async () => {
+    if (!summary?.activeCompany?.id) return;
+    setIsRemovingCompanyLogo(true);
+    try {
+      await invokeSupabaseFunctionWithSession<CompanyLogoMutationResponse>(
+        'auth-storage-images',
+        { action: 'delete', target: 'company-logo', companyId: summary.activeCompany.id },
+        'DELETE',
+      );
+      await Promise.all([loadSummary(), workspace.refreshWorkspace()]);
+      setCompanyLogoUploadProgress(0);
+      toast.success('Company logo removed');
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Unable to remove company logo');
+    } finally {
+      setIsRemovingCompanyLogo(false);
+    }
+  };
+
+  const handleCompanySubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!summary?.activeCompany?.id || !companyForm) return;
+
+    setIsSavingCompany(true);
+    try {
+      await apiRequest(`/api/companies/${summary.activeCompany.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(companyForm),
+      });
+      await Promise.all([loadSummary(), workspace.refreshWorkspace()]);
+      toast.success('Company details updated');
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Unable to update company');
+    } finally {
+      setIsSavingCompany(false);
     }
   };
 
@@ -733,11 +847,121 @@ export function SettingsPage() {
                 </div>
               </form>
             </SectionCard>
+
+            {/* Company */}
+            {summary?.activeCompany && companyForm ? (
+              <SectionCard title="Company">
+                <form className="space-y-5" onSubmit={handleCompanySubmit}>
+                  <CompanyProfileForm
+                    values={companyForm}
+                    onChange={(field, value) =>
+                      setCompanyForm((c) => (c ? { ...c, [field]: value } : null))
+                    }
+                    readOnly={!summary.activeCompany.permissions.canEditCompany}
+                  />
+
+                  <div className="flex flex-col gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs text-slate-400">
+                      {summary.activeCompany.permissions.canEditCompany
+                        ? 'Updated company details feed directly into new invoices.'
+                        : 'You have read-only access to company details.'}
+                    </p>
+                    {summary.activeCompany.permissions.canEditCompany ? (
+                      <Button
+                        type="submit"
+                        disabled={isSavingCompany}
+                        className="h-10 rounded-xl px-5 text-sm"
+                      >
+                        {isSavingCompany ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Saving…
+                          </>
+                        ) : (
+                          'Save changes'
+                        )}
+                      </Button>
+                    ) : null}
+                  </div>
+                </form>
+              </SectionCard>
+            ) : null}
+
+            {/* Company Members */}
+            {summary?.activeCompany ? (
+              <SectionCard
+                title="Company members"
+                action={
+                  <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">
+                    {summary.companyMembers.length} member{summary.companyMembers.length === 1 ? '' : 's'}
+                  </span>
+                }
+              >
+                <div className="space-y-2">
+                  {summary.companyMembers.map((member) => {
+                    const memberInitials = getInitials(member.name, member.email);
+                    return (
+                      <div
+                        key={member.id}
+                        className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-3"
+                      >
+                        {member.image ? (
+                          <img
+                            src={member.image}
+                            alt={member.name}
+                            className="h-9 w-9 shrink-0 rounded-lg border border-slate-200 object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-xs font-semibold text-white">
+                            {memberInitials}
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="truncate text-sm font-semibold text-slate-900">
+                              {member.name}
+                            </p>
+                            {member.isCurrentUser ? (
+                              <span className="inline-flex items-center gap-0.5 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-600">
+                                <Check className="h-2 w-2" />
+                                You
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="truncate text-xs text-slate-500">{member.email}</p>
+                        </div>
+                        <span className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                          {getCompanyRoleLabel(member.membershipRole)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </SectionCard>
+            ) : null}
           </div>
 
           {/* Branding column */}
-          {canManageSiteBranding ? (
-            <div className="space-y-5">
+          <div className="space-y-5">
+            {summary?.activeCompany ? (
+              <LogoCard
+                title="Document logo"
+                logoUrl={summary.activeCompany.documentLogoUrl}
+                emptyLabel="None"
+                uploadLabel="Upload"
+                replaceLabel="Replace"
+                progressLabel="Uploading…"
+                inputRef={companyLogoInputRef}
+                isUploading={isUploadingCompanyLogo}
+                uploadProgress={companyLogoUploadProgress}
+                isRemoving={isRemovingCompanyLogo}
+                canManage={summary.activeCompany.permissions.canEditCompany}
+                onSelect={(e) => void handleCompanyLogoSelection(e)}
+                onRemove={() => void handleRemoveCompanyLogo()}
+              />
+            ) : null}
+
+            {canManageSiteBranding ? (
               <LogoCard
                 title="Site logo"
                 logoUrl={branding.siteLogoUrl}
@@ -753,8 +977,8 @@ export function SettingsPage() {
                 onSelect={(e) => void handleSiteLogoSelection(e)}
                 onRemove={() => void handleRemoveSiteLogo()}
               />
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </div>
       </main>
 
