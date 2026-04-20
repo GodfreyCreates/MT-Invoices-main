@@ -9,6 +9,7 @@ Create a `.env` file with:
 ```env
 APP_URL=https://app.example.com
 AUTH_ALLOWED_HOSTS=app.example.com,www.example.com,localhost:3000,localhost:5173
+VITE_API_ORIGIN=https://app.example.com
 DATABASE_URL=postgresql://...
 BETTER_AUTH_SECRET=replace-with-a-long-random-secret
 TRUSTED_ORIGINS=http://localhost:3000
@@ -17,6 +18,8 @@ TRUSTED_ORIGINS=http://localhost:3000
 `APP_URL` is the canonical public origin used for invitations and email verification links.
 
 `AUTH_ALLOWED_HOSTS` is optional and accepts a comma-separated list of additional auth hosts or host patterns. Use hostnames only, not full URLs.
+
+`VITE_API_ORIGIN` is optional. Set it when the frontend is served from a different origin (for example Cloudflare Workers) so all `/api/*` and auth requests target your canonical backend origin.
 
 `TRUSTED_ORIGINS` is optional and accepts a comma-separated list of additional absolute origins for true cross-origin auth callers.
 

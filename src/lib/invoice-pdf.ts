@@ -1,4 +1,5 @@
 import type { InvoiceData } from '../store/useInvoiceStore';
+import { toClientApiUrl } from './client-env';
 
 type DownloadableInvoice = Pick<InvoiceData, 'invoiceNo'> & { id?: string };
 
@@ -64,7 +65,7 @@ function getRequiredInvoiceId(invoice: DownloadableInvoice) {
 }
 
 async function requestPdf(url: string, fallbackFilename: string, fallbackError: string) {
-  const response = await fetch(url, {
+  const response = await fetch(toClientApiUrl(url), {
     credentials: 'include',
   });
 

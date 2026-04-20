@@ -1,3 +1,5 @@
+import { toClientApiUrl } from './client-env';
+
 export class ApiError extends Error {
   status: number;
 
@@ -23,12 +25,16 @@ async function getErrorMessage(response: Response) {
 
 export async function apiRequest<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
+  const requestInput =
+    typeof input === 'string' && input.startsWith('/')
+      ? toClientApiUrl(input)
+      : input;
 
   if (init?.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
 
-  const response = await fetch(input, {
+  const response = await fetch(requestInput, {
     credentials: 'include',
     ...init,
     headers,

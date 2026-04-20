@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { toClientApiUrl } from './client-env';
 
 const DEFAULT_SITE_LOGO = '/logo.png';
 
@@ -36,7 +37,7 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
 
   const refreshBranding = useCallback(async () => {
     try {
-      const response = await fetch('/api/branding', {
+      const response = await fetch(toClientApiUrl('/api/branding'), {
         cache: 'no-store',
         credentials: 'include',
       });
