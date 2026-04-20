@@ -4,11 +4,6 @@ dotenv.config();
 
 const DEFAULT_LOCAL_PORT = '3000';
 const DEFAULT_LOCAL_DEV_HOSTS = ['localhost:5173', '127.0.0.1:5173'] as const;
-const REQUIRED_PRODUCTION_HOSTS = [
-  'mt-invoices-main.vercel.app',
-  'app.mtlegacylogistics.co.za',
-  'invoice.godfreysiaga292.workers.dev',
-] as const;
 
 let hasWarnedAboutSiteUrl = false;
 
@@ -171,10 +166,6 @@ export function getAuthAllowedHosts() {
     for (const rawHost of extraHosts.split(',')) {
       addHostWithAliases(hosts, normalizeHostPattern(rawHost, 'AUTH_ALLOWED_HOSTS'));
     }
-  }
-
-  for (const host of REQUIRED_PRODUCTION_HOSTS) {
-    addHostWithAliases(hosts, host);
   }
 
   return Array.from(hosts);

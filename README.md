@@ -9,7 +9,6 @@ Create a `.env` file with:
 ```env
 APP_URL=https://app.example.com
 AUTH_ALLOWED_HOSTS=app.example.com,www.example.com,localhost:3000,localhost:5173
-VITE_API_ORIGIN=https://app.example.com
 DATABASE_URL=postgresql://...
 BETTER_AUTH_SECRET=replace-with-a-long-random-secret
 TRUSTED_ORIGINS=http://localhost:3000
@@ -19,7 +18,7 @@ TRUSTED_ORIGINS=http://localhost:3000
 
 `AUTH_ALLOWED_HOSTS` is optional and accepts a comma-separated list of additional auth hosts or host patterns. Use hostnames only, not full URLs.
 
-`VITE_API_ORIGIN` is optional. Set it when the frontend is served from a different origin (for example Cloudflare Workers) so all `/api/*` and auth requests target your canonical backend origin.
+Frontend auth and API requests are same-origin.
 
 `TRUSTED_ORIGINS` is optional and accepts a comma-separated list of additional absolute origins for true cross-origin auth callers.
 
@@ -27,7 +26,7 @@ TRUSTED_ORIGINS=http://localhost:3000
 
 For production domains, the auth host allow-list now also accepts common apex/`www` aliases automatically (for example, configuring `app.example.com` also allows `www.app.example.com`).
 
-This project also enforces support for `mt-invoices-main.vercel.app`, `app.mtlegacylogistics.co.za`, and `invoice.godfreysiaga292.workers.dev` in the auth host allow-list.
+On Vercel, `VERCEL_URL` / `VERCEL_BRANCH_URL` and `APP_URL` are used to build the auth host allow-list.
 
 ## Run Locally
 
