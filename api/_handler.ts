@@ -1,14 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
+import { createApp } from "../server";
 
 let appPromise: Promise<(req: IncomingMessage, res: ServerResponse) => unknown> | null = null;
 
 async function getApp() {
   if (!appPromise) {
-    appPromise = (async () => {
-      const { createApp } = await import("../server");
-      return createApp();
-    })().catch((error) => {
+    appPromise = createApp().catch((error) => {
       appPromise = null;
       throw error;
     }) as Promise<(req: IncomingMessage, res: ServerResponse) => unknown>;
