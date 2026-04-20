@@ -37,6 +37,65 @@ const EMPTY_DASHBOARD_SUMMARY: DashboardSummary = {
 const DASHBOARD_ROLE_FILTERS: CompanyRole[] = ['owner', 'admin', 'member'];
 const dashboardCache = new Map<string, DashboardSummary>();
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function toFiniteNumber(value: unknown) {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim() !== ''
+        ? Number(value)
+        : 0;
+
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeRoleFilter(value: unknown, fallbackRole: CompanyRole): CompanyRole {
+  return value === 'owner' || value === 'admin' || value === 'member' ? value : fallbackRole;
+}
+
+function normalizeRecentInvoice(value: unknown): DashboardRecentInvoice | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const id = typeof value.id === 'string' ? value.id.trim() : '';
+  if (!id) {
+    return null;
+  }
+
+  return {
+    id,
+    invoiceNo: typeof value.invoiceNo === 'string' ? value.invoiceNo : '',
+    clientCompanyName: typeof value.clientCompanyName === 'string' ? value.clientCompanyName : '',
+    issueDate: typeof value.issueDate === 'string' ? value.issueDate : '',
+    totalAmount: toFiniteNumber(value.totalAmount),
+  };
+}
+
+function normalizeDashboardSummary(value: unknown, fallbackRole: CompanyRole): DashboardSummary {
+  if (!isRecord(value)) {
+    return {
+      ...EMPTY_DASHBOARD_SUMMARY,
+      appliedRoleFilter: fallbackRole,
+    };
+  }
+
+  return {
+    appliedRoleFilter: normalizeRoleFilter(value.appliedRoleFilter, fallbackRole),
+    recentInvoices: Array.isArray(value.recentInvoices)
+      ? value.recentInvoices
+          .map((invoice) => normalizeRecentInvoice(invoice))
+          .filter((invoice): invoice is DashboardRecentInvoice => Boolean(invoice))
+      : [],
+    totalInvoices: Math.max(0, Math.trunc(toFiniteNumber(value.totalInvoices))),
+    totalRevenue: toFiniteNumber(value.totalRevenue),
+    uniqueClients: Math.max(0, Math.trunc(toFiniteNumber(value.uniqueClients))),
+  };
+}
+
 type StatCardProps = {
   icon: React.ReactNode;
   label: string;
@@ -88,7 +147,8 @@ export function Dashboard() {
         const query = canFilterInvoicesByRole
           ? `?roleFilter=${encodeURIComponent(roleFilter)}`
           : '';
-        const data = await apiRequest<DashboardSummary>(`/api/dashboard${query}`);
+        const rawDashboard = await apiRequest<unknown>(`/api/dashboard${query}`);
+        const data = normalizeDashboardSummary(rawDashboard, roleFilter);
         if (isCancelled) {
           return;
         }

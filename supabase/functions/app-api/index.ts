@@ -1216,15 +1216,26 @@ async function resolveDashboardInvoiceScope(access: CompanyAccessContext, reques
 }
 
 function calculateServiceNetTotal(service: Record<string, unknown>) {
-  const quantity = Number(service.quantity ?? 0);
-  const unitPrice = Number(service.unit_price ?? 0);
-  const discountPercent = Number(service.discount_percent ?? 0);
-  const taxPercent = Number(service.tax_percent ?? 0);
+  const quantity = toFiniteNumber(service.quantity);
+  const unitPrice = toFiniteNumber(service.unit_price);
+  const discountPercent = toFiniteNumber(service.discount_percent);
+  const taxPercent = toFiniteNumber(service.tax_percent);
   const subtotal = quantity * unitPrice;
   const discountAmount = subtotal * (discountPercent / 100);
   const afterDiscount = subtotal - discountAmount;
   const taxAmount = afterDiscount * (taxPercent / 100);
-  return afterDiscount + taxAmount;
+  return toFiniteNumber(afterDiscount + taxAmount);
+}
+
+function toFiniteNumber(value: unknown) {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim() !== ''
+        ? Number(value)
+        : 0;
+
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function parseInvoiceIds(value: unknown, field: string) {
@@ -2142,10 +2153,14 @@ async function handleDashboard(session: SessionRecord, target: URL) {
   const totalsByInvoiceId = new Map<string, number>();
   let totalRevenue = 0;
   for (const serviceRow of serviceRows ?? []) {
+    if (!serviceRow.invoice_id) {
+      continue;
+    }
+
     const invoiceId = String(serviceRow.invoice_id);
     const netTotal = calculateServiceNetTotal(serviceRow as Record<string, unknown>);
-    totalsByInvoiceId.set(invoiceId, (totalsByInvoiceId.get(invoiceId) ?? 0) + netTotal);
-    totalRevenue += netTotal;
+    totalsByInvoiceId.set(invoiceId, toFiniteNumber((totalsByInvoiceId.get(invoiceId) ?? 0) + netTotal));
+    totalRevenue = toFiniteNumber(totalRevenue + netTotal);
   }
 
   const uniqueClients = new Set(
@@ -2159,14 +2174,14 @@ async function handleDashboard(session: SessionRecord, target: URL) {
     invoiceNo: String(invoiceRow.invoice_no ?? ''),
     clientCompanyName: String(invoiceRow.client_company_name ?? ''),
     issueDate: String(invoiceRow.issue_date ?? ''),
-    totalAmount: totalsByInvoiceId.get(String(invoiceRow.id)) ?? 0,
+    totalAmount: toFiniteNumber(totalsByInvoiceId.get(String(invoiceRow.id)) ?? 0),
   }));
 
   return jsonResponse(200, {
     appliedRoleFilter: scope.appliedRoleFilter,
     totalInvoices: (invoiceRows?.length ?? 0),
     uniqueClients,
-    totalRevenue,
+    totalRevenue: toFiniteNumber(totalRevenue),
     recentInvoices,
   });
 }

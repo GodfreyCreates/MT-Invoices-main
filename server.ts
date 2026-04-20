@@ -251,6 +251,10 @@ function getRecord(value: unknown, field: string): JsonRecord {
   return value as JsonRecord;
 }
 
+function isJsonRecord(value: unknown): value is JsonRecord {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function getTrimmedString(
   value: unknown,
   field: string,
@@ -1833,6 +1837,39 @@ type AuthSessionListItem = {
   ipAddress: string | null;
 };
 
+function normalizeDbExecuteRows(result: unknown): JsonRecord[] {
+  if (Array.isArray(result)) {
+    return result.filter(isJsonRecord);
+  }
+
+  if (isJsonRecord(result) && Array.isArray(result.rows)) {
+    return result.rows.filter(isJsonRecord);
+  }
+
+  if (result && typeof (result as Iterable<unknown>)[Symbol.iterator] === "function") {
+    return Array.from(result as Iterable<unknown>).filter(isJsonRecord);
+  }
+
+  return [];
+}
+
+function buildFallbackAuthSessions(req: Request, session: SessionRecord): AuthSessionListItem[] {
+  if (!session.sessionId) {
+    return [];
+  }
+
+  return [
+    {
+      id: session.sessionId,
+      createdAt: null,
+      updatedAt: new Date().toISOString(),
+      expiresAt: null,
+      userAgent: getHeaderValue(req.headers["user-agent"])?.trim() || null,
+      ipAddress: resolveClientIp(req),
+    },
+  ];
+}
+
 async function listAuthSessions(userId: string): Promise<AuthSessionListItem[]> {
   const result = await db.execute(sql`
     select
@@ -1847,7 +1884,7 @@ async function listAuthSessions(userId: string): Promise<AuthSessionListItem[]> 
     order by coalesce(s.refreshed_at::timestamptz, s.updated_at, s.created_at) desc, s.created_at desc
   `);
 
-  return Array.from(result as Iterable<Record<string, unknown>>).map((row) => ({
+  return normalizeDbExecuteRows(result).map((row) => ({
     id: String(row.id),
     createdAt: row.createdAt ? String(row.createdAt) : null,
     updatedAt: row.updatedAt ? String(row.updatedAt) : null,
@@ -1865,7 +1902,7 @@ async function deleteAuthSession(userId: string, sessionId: string) {
     returning id::text as id
   `);
 
-  return Array.from(deletedRows as Iterable<Record<string, unknown>>).length > 0;
+  return normalizeDbExecuteRows(deletedRows).length > 0;
 }
 
 async function deleteOtherAuthSessions(userId: string, currentSessionId: string | null | undefined) {
@@ -3021,7 +3058,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
           .from(authUsers)
           .where(eq(authUsers.id, session.user.id))
           .limit(1),
-        listAuthSessions(session.user.id),
+        listAuthSessions(session.user.id).catch((error) => {
+          console.error("Failed to resolve auth sessions for settings summary", error);
+          return buildFallbackAuthSessions(req, session);
+        }),
       ]);
 
       const currentProfile = profile[0];
@@ -3066,7 +3106,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
     }
 
     try {
-      const authSessions = await listAuthSessions(session.user.id);
+      const authSessions = await listAuthSessions(session.user.id).catch((error) => {
+        console.error("Failed to resolve auth sessions for settings devices", error);
+        return buildFallbackAuthSessions(req, session);
+      });
       res.json({
         currentSessionId: session.sessionId ?? null,
         sessions: authSessions.map((authSession) => ({
