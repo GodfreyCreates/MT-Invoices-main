@@ -6,3 +6,6 @@ verify_jwt = false
 
 [functions.auth-storage-images]
 verify_jwt = false
+
+[functions.app-api]
+verify_jwt = false
