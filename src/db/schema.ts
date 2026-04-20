@@ -35,6 +35,7 @@ export const companyMemberships = pgTable('company_memberships', {
 }, (table) => [
   index('company_memberships_company_id_idx').on(table.companyId),
   index('company_memberships_user_id_idx').on(table.userId),
+  index('company_memberships_company_role_user_idx').on(table.companyId, table.role, table.userId),
   uniqueIndex('company_memberships_company_user_idx').on(table.companyId, table.userId),
 ]);
 
@@ -63,6 +64,7 @@ export const invoices = pgTable('invoices', {
   index('invoices_user_id_idx').on(table.userId),
   index('invoices_company_id_idx').on(table.companyId),
   index('invoices_company_updated_at_idx').on(table.companyId, table.updatedAt, table.createdAt),
+  index('invoices_company_user_updated_at_idx').on(table.companyId, table.userId, table.updatedAt, table.createdAt),
   uniqueIndex('invoices_verification_token_idx').on(table.verificationToken),
 ]);
 
@@ -78,13 +80,16 @@ export const services = pgTable('services', {
   unitPrice: numeric('unit_price').notNull(),
   discountPercent: numeric('discount_percent').notNull(),
   taxPercent: numeric('tax_percent').notNull(),
-});
+}, (table) => [
+  index('services_invoice_id_idx').on(table.invoiceId),
+]);
 
 export const userInvitations = pgTable('user_invitations', {
   id: uuid('id').defaultRandom().primaryKey(),
   email: text('email').notNull(),
   role: text('role').notNull().default('user'),
   token: uuid('token').defaultRandom().notNull(),
+  companyId: uuid('company_id').references(() => companies.id, { onDelete: 'set null' }),
   inviterUserId: text('inviter_user_id').references(() => user.id, { onDelete: 'set null' }),
   acceptedAt: timestamp('accepted_at'),
   revokedAt: timestamp('revoked_at'),
@@ -93,6 +98,7 @@ export const userInvitations = pgTable('user_invitations', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 }, (table) => [
   index('user_invitations_email_idx').on(table.email),
+  index('user_invitations_company_id_idx').on(table.companyId),
   index('user_invitations_inviter_user_id_idx').on(table.inviterUserId),
   uniqueIndex('user_invitations_token_idx').on(table.token),
 ]);

@@ -14,6 +14,7 @@ export const user = pgTable("user", {
   documentLogoKey: text("document_logo_key"),
   companyLogoUrl: text("company_logo_url"),
   companyLogoKey: text("company_logo_key"),
+  lastSeenAt: timestamp("last_seen_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()

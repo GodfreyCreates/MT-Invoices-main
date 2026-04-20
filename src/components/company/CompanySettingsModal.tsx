@@ -21,7 +21,13 @@ import {
   type CompanyMember,
   type CompanyRole,
 } from '../../lib/company';
-import { useUploadThing } from '../../lib/uploadthing';
+import {
+  createSupabaseFunctionHeaders,
+  getSupabaseFunctionUrl,
+  invokeSupabaseFunctionWithSession,
+} from '../../lib/supabase-functions';
+import { getSupabaseAccessToken } from '../../lib/supabase';
+import { uploadFileToApi } from '../../lib/uploads';
 import { toast } from 'sonner';
 
 type CompanySettingsModalProps = {
@@ -29,6 +35,13 @@ type CompanySettingsModalProps = {
   isOpen: boolean;
   onClose: () => void;
   onUpdated?: () => Promise<void> | void;
+};
+
+type CompanyLogoMutationResponse = {
+  target: 'company-logo';
+  publicUrl: string | null;
+  objectPath: string | null;
+  companyId: string;
 };
 
 const companyMemberRoleOptions: PopoverSelectOption<CompanyRole>[] = [
@@ -115,6 +128,7 @@ export function CompanySettingsModal({
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isRemovingLogo, setIsRemovingLogo] = useState(false);
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const [memberActionId, setMemberActionId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
@@ -164,38 +178,6 @@ export function CompanySettingsModal({
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
   }, [isOpen, onClose]);
-
-  const {
-    startUpload: startCompanyLogoUpload,
-    isUploading: isUploadingLogo,
-  } = useUploadThing('companyDocumentLogo', {
-    onClientUploadComplete: async () => {
-      setUploadProgress(100);
-      await Promise.all([loadCompanyDetail(), onUpdated?.()]);
-      toast.success('Company logo updated successfully');
-      window.setTimeout(() => {
-        setUploadProgress(0);
-      }, 600);
-    },
-    onUploadError: (uploadError) => {
-      setUploadProgress(0);
-      toast.error(uploadError.message || 'Company logo upload failed');
-    },
-    onUploadProgress: (progress) => {
-      setUploadProgress(progress);
-    },
-  });
-
-  const uploadCompanyLogoForCompany = async (files: File[], targetCompanyId: string) => {
-    // The generated UploadThing helper loses the endpoint input type here,
-    // but the route still expects `{ companyId }` and accepts it at runtime.
-    const uploadWithInput = startCompanyLogoUpload as unknown as (
-      nextFiles: File[],
-      input: { companyId: string },
-    ) => Promise<unknown>;
-
-    await uploadWithInput(files, { companyId: targetCompanyId });
-  };
 
   const canEditCompany = Boolean(detail?.company.permissions.canEditCompany);
   const canManageMembers = Boolean(detail?.company.permissions.canManageMembers);
@@ -259,10 +241,34 @@ export function CompanySettingsModal({
     }
 
     try {
-      await uploadCompanyLogoForCompany(files, companyId);
+      const accessToken = await getSupabaseAccessToken();
+      if (!accessToken) {
+        throw new Error('You must be signed in to upload a company logo');
+      }
+
+      setIsUploadingLogo(true);
+      await uploadFileToApi<CompanyLogoMutationResponse>({
+        url: getSupabaseFunctionUrl('auth-storage-images'),
+        file,
+        accessToken,
+        fields: {
+          target: 'company-logo',
+          companyId,
+        },
+        headers: createSupabaseFunctionHeaders(),
+        onProgress: setUploadProgress,
+      });
+      setUploadProgress(100);
+      await Promise.all([loadCompanyDetail(), onUpdated?.()]);
+      toast.success('Company logo updated successfully');
+      window.setTimeout(() => {
+        setUploadProgress(0);
+      }, 600);
     } catch (requestError) {
       toast.error(requestError instanceof Error ? requestError.message : 'Upload failed');
       setUploadProgress(0);
+    } finally {
+      setIsUploadingLogo(false);
     }
   };
 
@@ -273,9 +279,11 @@ export function CompanySettingsModal({
 
     setIsRemovingLogo(true);
     try {
-      await apiRequest(`/api/companies/${companyId}/logo`, {
-        method: 'DELETE',
-      });
+      await invokeSupabaseFunctionWithSession<CompanyLogoMutationResponse>('auth-storage-images', {
+        action: 'delete',
+        target: 'company-logo',
+        companyId,
+      }, 'DELETE');
       await Promise.all([loadCompanyDetail(), onUpdated?.()]);
       setUploadProgress(0);
       toast.success('Company logo removed');

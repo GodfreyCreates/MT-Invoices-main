@@ -139,12 +139,29 @@ export function getRequiredEnv(name: string) {
   return value;
 }
 
-export function getDatabaseUrl() {
-  return getRequiredEnv('DATABASE_URL');
+export function getAppSecret() {
+  const appSecret = getEnvValue('APP_SECRET');
+  if (appSecret) {
+    return appSecret;
+  }
+
+  throw new Error('Missing required environment variable: APP_SECRET');
 }
 
-export function getAuthSecret() {
-  return getRequiredEnv('BETTER_AUTH_SECRET');
+export function getDatabaseUrl() {
+  return getRequiredEnv('SUPABASE_DB_URL');
+}
+
+export function getSupabaseUrl() {
+  return getRequiredEnv('VITE_SUPABASE_URL');
+}
+
+export function getSupabasePublishableKey() {
+  return getRequiredEnv('VITE_SUPABASE_PUBLISHABLE_KEY');
+}
+
+export function getSupabaseServiceRoleKey() {
+  return getRequiredEnv('SUPABASE_SERVICE_ROLE_KEY');
 }
 
 export function getPublicAppOrigin() {
@@ -160,34 +177,6 @@ export function getPublicAppOrigin() {
   return getDefaultLocalOrigin();
 }
 
-export function getAuthAllowedHosts() {
-  const hosts = new Set<string>([
-    ...getLocalDevelopmentHosts(),
-    ...getVercelRequestHosts(),
-  ]);
-  const publicAppOrigin = getConfiguredPublicAppOrigin();
-  const extraHosts = getEnvValue('AUTH_ALLOWED_HOSTS');
-
-  if (publicAppOrigin) {
-    addHostWithAliases(hosts, new URL(publicAppOrigin).host);
-  }
-
-  if (extraHosts) {
-    for (const rawHost of extraHosts.split(',')) {
-      addHostWithAliases(hosts, normalizeHostPattern(rawHost, 'AUTH_ALLOWED_HOSTS'));
-    }
-  }
-
-  return Array.from(hosts);
-}
-
-export function getAuthBaseUrlConfig() {
-  return {
-    allowedHosts: getAuthAllowedHosts(),
-    protocol: 'auto' as const,
-  };
-}
-
 export function toPublicAppUrl(value: string) {
   const publicOrigin = getPublicAppOrigin();
   const resolvedUrl = new URL(value, publicOrigin);
@@ -197,21 +186,4 @@ export function toPublicAppUrl(value: string) {
   resolvedUrl.host = publicUrl.host;
 
   return resolvedUrl.toString();
-}
-
-export function getTrustedOrigins() {
-  const origins = new Set<string>();
-  const extraOrigins = getEnvValue('TRUSTED_ORIGINS');
-
-  if (extraOrigins) {
-    for (const rawOrigin of extraOrigins.split(',')) {
-      const trimmedOrigin = rawOrigin.trim();
-      if (!trimmedOrigin) {
-        continue;
-      }
-      origins.add(normalizeOrigin(trimmedOrigin, 'TRUSTED_ORIGINS'));
-    }
-  }
-
-  return Array.from(origins);
 }

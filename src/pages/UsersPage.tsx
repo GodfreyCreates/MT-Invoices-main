@@ -7,6 +7,7 @@ import {
   Mail,
   Search,
   ShieldCheck,
+  Trash2,
   UserPlus,
   Users,
   X,
@@ -14,10 +15,13 @@ import {
 import { AnimatePresence, motion } from 'motion/react';
 import { AppHeader } from '../components/layout/AppHeader';
 import { Button } from '../components/ui/Button';
+import { useConfirmation } from '../components/ui/ConfirmationProvider';
 import { PopoverSelect, type PopoverSelectOption } from '../components/ui/PopoverSelect';
 import { ApiError, apiRequest } from '../lib/api';
 import { authClient, isAuthenticatedSession } from '../lib/auth-client';
+import { invokeSupabaseFunctionWithSession } from '../lib/supabase-functions';
 import { cn } from '../lib/utils';
+import { useWorkspace } from '../lib/workspace';
 import { toast } from 'sonner';
 
 type UserSummary = {
@@ -41,6 +45,14 @@ type UserSummary = {
 type RoleFilter = 'all' | 'admin' | 'user';
 type VerificationFilter = 'all' | 'verified' | 'unverified';
 type InviteRole = 'admin' | 'user';
+type InviteUserResponse = {
+  email: string;
+  role: InviteRole;
+  companyId: string | null;
+  invitationUrl: string;
+  expiresAt: string;
+  emailDelivered: boolean;
+};
 
 const inviteRoleOptions: PopoverSelectOption<InviteRole>[] = [
   { value: 'user', label: 'User' },
@@ -302,9 +314,13 @@ function UsersCardList({
 
 function UserDetailsDialog({
   user,
+  isDeleting,
+  onDelete,
   onClose,
 }: {
   user: UserSummary | null;
+  isDeleting: boolean;
+  onDelete: () => void;
   onClose: () => void;
 }) {
   return (
@@ -420,6 +436,18 @@ function UserDetailsDialog({
                     </div>
                   </div>
                 </div>
+                {!user.isCurrentUser ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={onDelete}
+                    disabled={isDeleting}
+                    className="gap-2"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {isDeleting ? 'Deleting user...' : 'Delete user'}
+                  </Button>
+                ) : null}
               </div>
             </div>
           </motion.div>
@@ -433,18 +461,24 @@ function InviteUserDialog({
   isOpen,
   email,
   role,
+  companyId,
+  companyOptions,
   isSubmitting,
   onEmailChange,
   onRoleChange,
+  onCompanyChange,
   onClose,
   onSubmit,
 }: {
   isOpen: boolean;
   email: string;
   role: InviteRole;
+  companyId: string;
+  companyOptions: PopoverSelectOption<string>[];
   isSubmitting: boolean;
   onEmailChange: (value: string) => void;
   onRoleChange: (value: InviteRole) => void;
+  onCompanyChange: (value: string) => void;
   onClose: () => void;
   onSubmit: () => void;
 }) {
@@ -515,6 +549,24 @@ function InviteUserDialog({
                 />
               </div>
 
+              {role === 'user' ? (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">Company</label>
+                  <PopoverSelect
+                    value={companyId}
+                    onValueChange={onCompanyChange}
+                    options={companyOptions}
+                    placeholder="Select the company to assign"
+                    emptyMessage="No companies available"
+                    ariaLabel="Invitation company"
+                    triggerClassName="mt-2 h-12"
+                  />
+                  <p className="mt-2 text-sm text-slate-500">
+                    The invited user will join this company as a member after they accept the invitation.
+                  </p>
+                </div>
+              ) : null}
+
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                 Invitations expire automatically after 7 days. Sending a new invite for the same email replaces the previous active one.
               </div>
@@ -537,6 +589,8 @@ function InviteUserDialog({
 
 export function UsersPage() {
   const navigate = useNavigate();
+  const confirm = useConfirmation();
+  const workspace = useWorkspace();
   const { data: session, isPending: isSessionPending } = authClient.useSession();
   const isAuthenticated = isAuthenticatedSession(session);
   const [users, setUsers] = useState<UserSummary[]>([]);
@@ -549,7 +603,9 @@ export function UsersPage() {
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<InviteRole>('user');
+  const [inviteCompanyId, setInviteCompanyId] = useState('');
   const [isSendingInvite, setIsSendingInvite] = useState(false);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const normalizedQuery = deferredSearchQuery.trim().toLowerCase();
@@ -622,6 +678,31 @@ export function UsersPage() {
     };
   }, [users]);
 
+  const inviteCompanyOptions = useMemo<PopoverSelectOption<string>[]>(() => {
+    const companies = workspace.allCompanies ?? workspace.companies;
+    return companies.map((company) => ({
+      value: company.id,
+      label: company.name,
+      description: `${company.memberCount} member${company.memberCount === 1 ? '' : 's'}`,
+    }));
+  }, [workspace.allCompanies, workspace.companies]);
+
+  useEffect(() => {
+    if (inviteRole !== 'user') {
+      setInviteCompanyId('');
+      return;
+    }
+
+    if (inviteCompanyId) {
+      return;
+    }
+
+    const defaultCompanyId = workspace.activeCompany?.id ?? inviteCompanyOptions[0]?.value ?? '';
+    if (defaultCompanyId) {
+      setInviteCompanyId(defaultCompanyId);
+    }
+  }, [inviteCompanyId, inviteCompanyOptions, inviteRole, workspace.activeCompany?.id]);
+
   const openUserDetails = (user: UserSummary) => {
     startTransition(() => {
       setSelectedUser(user);
@@ -635,19 +716,36 @@ export function UsersPage() {
       return;
     }
 
+    if (inviteRole === 'user' && !inviteCompanyId) {
+      toast.error('Select the company this invited user should join');
+      return;
+    }
+
     setIsSendingInvite(true);
 
     try {
-      await apiRequest('/api/invitations', {
-        method: 'POST',
-        body: JSON.stringify({
-          email: normalizedEmail,
-          role: inviteRole,
-        }),
+      const result = await invokeSupabaseFunctionWithSession<InviteUserResponse>('auth-invitations', {
+        action: 'create',
+        email: normalizedEmail,
+        role: inviteRole,
+        companyId: inviteRole === 'user' ? inviteCompanyId : null,
+        appOrigin: window.location.origin,
       });
-      toast.success(`Invitation sent to ${normalizedEmail}`);
+
+      if (result.emailDelivered) {
+        toast.success(`Invitation sent to ${normalizedEmail}`);
+      } else {
+        try {
+          await navigator.clipboard.writeText(result.invitationUrl);
+          toast.warning(`Invitation created for ${normalizedEmail}. Email was not sent, so the invite link was copied to your clipboard.`);
+        } catch {
+          toast.warning(`Invitation created for ${normalizedEmail}. Email was not sent. Share the invite link manually: ${result.invitationUrl}`);
+        }
+      }
+
       setInviteEmail('');
       setInviteRole('user');
+      setInviteCompanyId(workspace.activeCompany?.id ?? inviteCompanyOptions[0]?.value ?? '');
       setIsInviteDialogOpen(false);
     } catch (requestError) {
       const message =
@@ -655,6 +753,40 @@ export function UsersPage() {
       toast.error(message);
     } finally {
       setIsSendingInvite(false);
+    }
+  };
+
+  const handleDeleteUser = async (user: UserSummary) => {
+    if (user.isCurrentUser) {
+      toast.error('You cannot delete your own account');
+      return;
+    }
+
+    const confirmed = await confirm({
+      title: 'Delete user',
+      description: `Delete ${user.name} (${user.email})? This removes their access, memberships, and active sessions.`,
+      confirmLabel: 'Delete user',
+      variant: 'destructive',
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingUserId(user.id);
+
+    try {
+      await apiRequest<void>(`/api/users/${encodeURIComponent(user.id)}`, { method: 'DELETE' });
+      setUsers((currentUsers) => currentUsers.filter((currentUser) => currentUser.id !== user.id));
+      setSelectedUser((currentSelectedUser) =>
+        currentSelectedUser?.id === user.id ? null : currentSelectedUser,
+      );
+      toast.success('User deleted successfully');
+    } catch (requestError) {
+      const message =
+        requestError instanceof Error ? requestError.message : 'Failed to delete user';
+      toast.error(message);
+    } finally {
+      setDeletingUserId(null);
     }
   };
 
@@ -811,14 +943,26 @@ export function UsersPage() {
         </section>
       </main>
 
-      <UserDetailsDialog user={selectedUser} onClose={() => setSelectedUser(null)} />
+      <UserDetailsDialog
+        user={selectedUser}
+        isDeleting={selectedUser ? deletingUserId === selectedUser.id : false}
+        onDelete={() => {
+          if (selectedUser) {
+            void handleDeleteUser(selectedUser);
+          }
+        }}
+        onClose={() => setSelectedUser(null)}
+      />
       <InviteUserDialog
         isOpen={isInviteDialogOpen}
         email={inviteEmail}
         role={inviteRole}
+        companyId={inviteCompanyId}
+        companyOptions={inviteCompanyOptions}
         isSubmitting={isSendingInvite}
         onEmailChange={setInviteEmail}
         onRoleChange={setInviteRole}
+        onCompanyChange={setInviteCompanyId}
         onClose={() => {
           if (isSendingInvite) {
             return;

@@ -1,4 +1,5 @@
 import { toClientApiUrl } from './client-env';
+import { getSupabaseAccessToken } from './supabase';
 
 export class ApiError extends Error {
   status: number;
@@ -30,12 +31,16 @@ export async function apiRequest<T>(input: RequestInfo | URL, init?: RequestInit
       ? toClientApiUrl(input)
       : input;
 
+  const accessToken = await getSupabaseAccessToken();
+  if (accessToken && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${accessToken}`);
+  }
+
   if (init?.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
 
   const response = await fetch(requestInput, {
-    credentials: 'include',
     ...init,
     headers,
   });

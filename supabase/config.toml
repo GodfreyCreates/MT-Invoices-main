@@ -1,0 +1,8 @@
+[functions.auth-session]
+verify_jwt = false
+
+[functions.auth-invitations]
+verify_jwt = false
+
+[functions.auth-storage-images]
+verify_jwt = false

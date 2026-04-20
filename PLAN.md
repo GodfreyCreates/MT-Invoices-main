@@ -59,7 +59,7 @@ Move the app from user-owned invoice data to company-scoped workspaces.
 
 ### Branding and uploads
 - Move invoice document branding to the company model.
-- Add a company-scoped UploadThing route for the active company document logo, restricted to company `owner`/`admin`.
+- Add a company-scoped Supabase Storage route for the active company document logo, restricted to company `owner`/`admin`.
 - Stop using `user.documentLogoUrl` for invoices.
 - Keep `/api/branding` and global site-logo behavior for MT Legacy app branding only.
 
@@ -77,7 +77,7 @@ Move the app from user-owned invoice data to company-scoped workspaces.
   - `POST /api/companies` to create a company
   - `POST /api/companies/active` to switch active company
   - `GET /api/companies/:id` and `PATCH /api/companies/:id` for company details
-  - `POST /api/companies/:id/logo` or UploadThing route for company document logo
+  - `POST /api/companies/:id/logo` or Supabase Storage route for company document logo
   - admin-only membership endpoints for add/remove/role changes
 - Expand settings summary to include active company data and company permissions.
 - Update invoice payload/serialization so invoice responses include company-derived document logo and issuer context rather than user-derived logo context.

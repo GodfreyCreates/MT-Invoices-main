@@ -1,6 +1,7 @@
 import React from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, List, PlusCircle, Settings, Users } from 'lucide-react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { LayoutDashboard, List, LogOut, PlusCircle, Settings, Users } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '../../lib/utils';
 import { authClient, isAuthenticatedSession } from '../../lib/auth-client';
 import { useWorkspace } from '../../lib/workspace';
@@ -9,6 +10,7 @@ export function MobileNav() {
   const { data: session } = authClient.useSession();
   const workspace = useWorkspace();
   const location = useLocation();
+  const navigate = useNavigate();
   const isAuthenticated = isAuthenticatedSession(session);
 
   if (
@@ -37,12 +39,21 @@ export function MobileNav() {
           },
         ]
       : [
-          null,
           {
             to: '/settings',
             label: 'Settings',
             icon: Settings,
             isActive: location.pathname.startsWith('/settings'),
+          },
+          {
+            label: 'Logout',
+            icon: LogOut,
+            isActive: false,
+            onSelect: async () => {
+              await authClient.signOut();
+              toast.success('Signed out successfully');
+              navigate('/auth');
+            },
           },
         ];
 
@@ -57,6 +68,19 @@ export function MobileNav() {
     }
 
     const Icon = item.icon;
+
+    if ('onSelect' in item) {
+      return (
+        <button
+          type="button"
+          onClick={() => void item.onSelect()}
+          className="flex flex-col items-center gap-1 px-1 py-2 transition-colors duration-200 min-w-0 text-slate-500 hover:text-slate-900"
+        >
+          <Icon className="h-6 w-6 flex-shrink-0" />
+          <span className="text-[10px] font-semibold tracking-wide">{item.label}</span>
+        </button>
+      );
+    }
 
     return (
       <NavLink

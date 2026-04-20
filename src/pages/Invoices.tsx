@@ -1,11 +1,13 @@
 import React, { startTransition, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
-import { Download, Edit, Eye, FileText, Search, Trash2 } from 'lucide-react';
+import { Download, Edit, Eye, FileText, Loader2, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppHeader } from '../components/layout/AppHeader';
 import { Button } from '../components/ui/Button';
+import { useConfirmation } from '../components/ui/ConfirmationProvider';
 import { apiRequest } from '../lib/api';
+import { type CompanyRole, getCompanyRoleLabel } from '../lib/company';
 import { downloadInvoicePdf, downloadInvoicesPdf } from '../lib/invoice-pdf';
 import { cn } from '../lib/utils';
 import { useWorkspace } from '../lib/workspace';
@@ -18,20 +20,17 @@ type InvoiceListItem = Pick<
   id: string;
 };
 
-type DeleteConfirmState = {
-  count: number;
-  isOpen: boolean;
-  onConfirm: () => Promise<void>;
+type InvoiceListResponse = {
+  appliedRoleFilter: CompanyRole;
+  invoices: InvoiceListItem[];
 };
 
-const INITIAL_DELETE_CONFIRM: DeleteConfirmState = {
-  count: 0,
-  isOpen: false,
-  onConfirm: async () => undefined,
-};
+const INVOICE_ROLE_FILTERS: CompanyRole[] = ['owner', 'admin', 'member'];
+const invoiceListCache = new Map<string, InvoiceListResponse>();
 
 export function Invoices() {
   const navigate = useNavigate();
+  const confirm = useConfirmation();
   const setInvoiceData = useInvoiceStore((state) => state.setInvoiceData);
   const { activeCompany } = useWorkspace();
   const [invoices, setInvoices] = useState<InvoiceListItem[]>([]);
@@ -41,29 +40,60 @@ export function Invoices() {
   const [isBulkDownloading, setIsBulkDownloading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState>(INITIAL_DELETE_CONFIRM);
+  const [roleFilter, setRoleFilter] = useState<CompanyRole>('member');
   const deferredSearchQuery = useDeferredValue(searchQuery);
+  const canFilterInvoicesByRole = activeCompany?.permissions.canManageMembers ?? false;
+  const activeRole = activeCompany?.membershipRole ?? 'member';
+
+  useEffect(() => {
+    setRoleFilter(activeRole);
+  }, [activeCompany?.id, activeRole]);
 
   useEffect(() => {
     let isCancelled = false;
+    const cacheKey = activeCompany ? `${activeCompany.id}:${roleFilter}` : null;
 
     const fetchInvoices = async () => {
-      setIsLoading(true);
+      const cachedInvoices = cacheKey ? invoiceListCache.get(cacheKey) : undefined;
 
-      try {
-        const data = await apiRequest<InvoiceListItem[]>('/api/invoices');
-        if (isCancelled) {
-          return;
-        }
-
+      if (cachedInvoices) {
         startTransition(() => {
-          setInvoices(data);
+          setInvoices(cachedInvoices.invoices);
           setSelectedIds((currentSelectedIds) => {
             if (currentSelectedIds.length === 0) {
               return currentSelectedIds;
             }
 
-            const availableIds = new Set(data.map((invoice) => invoice.id));
+            const availableIds = new Set(cachedInvoices.invoices.map((invoice) => invoice.id));
+            return currentSelectedIds.filter((invoiceId) => availableIds.has(invoiceId));
+          });
+        });
+        setIsLoading(false);
+      } else {
+        setIsLoading(true);
+      }
+
+      try {
+        const query = canFilterInvoicesByRole
+          ? `?roleFilter=${encodeURIComponent(roleFilter)}`
+          : '';
+        const data = await apiRequest<InvoiceListResponse>(`/api/invoices${query}`);
+        if (isCancelled) {
+          return;
+        }
+
+        if (cacheKey) {
+          invoiceListCache.set(cacheKey, data);
+        }
+        startTransition(() => {
+          setInvoices(data.invoices);
+          setRoleFilter(data.appliedRoleFilter);
+          setSelectedIds((currentSelectedIds) => {
+            if (currentSelectedIds.length === 0) {
+              return currentSelectedIds;
+            }
+
+            const availableIds = new Set(data.invoices.map((invoice) => invoice.id));
             return currentSelectedIds.filter((invoiceId) => availableIds.has(invoiceId));
           });
         });
@@ -95,7 +125,7 @@ export function Invoices() {
     return () => {
       isCancelled = true;
     };
-  }, [activeCompany?.id]);
+  }, [activeCompany?.id, canFilterInvoicesByRole, roleFilter]);
 
   const filteredInvoices = useMemo(() => {
     const normalizedQuery = deferredSearchQuery.trim().toLowerCase();
@@ -121,10 +151,6 @@ export function Invoices() {
     filteredInvoiceIds.length > 0 &&
     filteredInvoiceIds.every((invoiceId) => selectedIdSet.has(invoiceId));
 
-  const closeDeleteConfirm = () => {
-    setDeleteConfirm(INITIAL_DELETE_CONFIRM);
-  };
-
   const handleSelectAll = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.checked) {
       setSelectedIds(filteredInvoiceIds);
@@ -144,40 +170,51 @@ export function Invoices() {
 
   const handleBulkDelete = async () => {
     const selectedIdsSnapshot = [...selectedIds];
-    const selectedIdsSnapshotSet = new Set(selectedIdsSnapshot);
+    if (selectedIdsSnapshot.length === 0) {
+      return;
+    }
 
-    setDeleteConfirm({
-      count: selectedIdsSnapshot.length,
-      isOpen: true,
-      onConfirm: async () => {
-        const results = await Promise.allSettled(
-          selectedIdsSnapshot.map((invoiceId) =>
-            apiRequest<void>(`/api/invoices/${invoiceId}`, { method: 'DELETE' }),
-          ),
-        );
-        const failedCount = results.filter((result) => result.status === 'rejected').length;
-
-        if (failedCount === 0) {
-          setInvoices((currentInvoices) =>
-            currentInvoices.filter((invoice) => !selectedIdsSnapshotSet.has(invoice.id)),
-          );
-          setSelectedIds([]);
-          toast.success(`${selectedIdsSnapshot.length} invoices deleted`);
-          return;
-        }
-
-        console.error('Error deleting invoices:', results);
-        setSelectedIds([]);
-        toast.error(
-          `${failedCount} invoice ${failedCount === 1 ? 'was' : 'were'} not deleted`,
-        );
-      },
+    const confirmed = await confirm({
+      title: selectedIdsSnapshot.length === 1 ? 'Delete invoice' : 'Delete invoices',
+      description: `Delete ${selectedIdsSnapshot.length} ${
+        selectedIdsSnapshot.length === 1 ? 'invoice' : 'invoices'
+      }? This action cannot be undone.`,
+      confirmLabel: 'Delete',
+      variant: 'destructive',
     });
+
+    if (!confirmed) {
+      return;
+    }
+
+    const selectedIdsSnapshotSet = new Set(selectedIdsSnapshot);
+    const results = await Promise.allSettled(
+      selectedIdsSnapshot.map((invoiceId) =>
+        apiRequest<void>(`/api/invoices/${invoiceId}`, { method: 'DELETE' }),
+      ),
+    );
+    const failedCount = results.filter((result) => result.status === 'rejected').length;
+
+    if (failedCount === 0) {
+      setInvoices((currentInvoices) =>
+        currentInvoices.filter((invoice) => !selectedIdsSnapshotSet.has(invoice.id)),
+      );
+      setSelectedIds([]);
+      toast.success(`${selectedIdsSnapshot.length} invoices deleted`);
+      return;
+    }
+
+    console.error('Error deleting invoices:', results);
+    setSelectedIds([]);
+    toast.error(
+      `${failedCount} invoice ${failedCount === 1 ? 'was' : 'were'} not deleted`,
+    );
   };
 
   const handleBulkDownload = async () => {
+    const downloadToastId = toast.loading('Preparing invoice download...');
     setIsBulkDownloading(true);
-    setDownloadingIds(selectedIds);
+    setDownloadingIds([...selectedIds]);
 
     try {
       const selectedInvoices = invoices.filter((invoice) => selectedIdSet.has(invoice.id));
@@ -185,9 +222,11 @@ export function Invoices() {
         selectedInvoices,
         `Bulk_Invoices_${format(new Date(), 'yyyyMMdd')}.pdf`,
       );
-      toast.success('Bulk download complete');
+      toast.success('Bulk download complete', { id: downloadToastId });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to download invoices');
+      toast.error(error instanceof Error ? error.message : 'Failed to download invoices', {
+        id: downloadToastId,
+      });
     } finally {
       setDownloadingIds([]);
       setIsBulkDownloading(false);
@@ -212,39 +251,55 @@ export function Invoices() {
   };
 
   const handleDelete = (invoiceId: string) => {
-    setDeleteConfirm({
-      count: 1,
-      isOpen: true,
-      onConfirm: async () => {
-        try {
-          await apiRequest<void>(`/api/invoices/${invoiceId}`, {
-            method: 'DELETE',
-          });
-          setInvoices((currentInvoices) =>
-            currentInvoices.filter((invoice) => invoice.id !== invoiceId),
-          );
-          setSelectedIds((currentSelectedIds) =>
-            currentSelectedIds.filter((selectedId) => selectedId !== invoiceId),
-          );
-          toast.success('Invoice deleted successfully');
-        } catch (error) {
-          console.error('Error deleting invoice:', error);
-          toast.error('Failed to delete invoice');
-        }
-      },
-    });
+    void (async () => {
+      const confirmed = await confirm({
+        title: 'Delete invoice',
+        description: 'Delete this invoice? This action cannot be undone.',
+        confirmLabel: 'Delete',
+        variant: 'destructive',
+      });
+
+      if (!confirmed) {
+        return;
+      }
+
+      try {
+        await apiRequest<void>(`/api/invoices/${invoiceId}`, {
+          method: 'DELETE',
+        });
+        setInvoices((currentInvoices) =>
+          currentInvoices.filter((invoice) => invoice.id !== invoiceId),
+        );
+        setSelectedIds((currentSelectedIds) =>
+          currentSelectedIds.filter((selectedId) => selectedId !== invoiceId),
+        );
+        toast.success('Invoice deleted successfully');
+      } catch (error) {
+        console.error('Error deleting invoice:', error);
+        toast.error('Failed to delete invoice');
+      }
+    })();
   };
 
   const handleDownload = async (invoice: InvoiceListItem) => {
-    setDownloadingIds([invoice.id]);
+    const downloadToastId = toast.loading(`Preparing ${invoice.invoiceNo}...`);
+    setDownloadingIds((currentDownloadingIds) =>
+      currentDownloadingIds.includes(invoice.id)
+        ? currentDownloadingIds
+        : [...currentDownloadingIds, invoice.id],
+    );
 
     try {
       await downloadInvoicePdf(invoice, `Invoice_${invoice.invoiceNo}.pdf`);
-      toast.success('Invoice downloaded successfully');
+      toast.success('Invoice downloaded successfully', { id: downloadToastId });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to download invoice');
+      toast.error(error instanceof Error ? error.message : 'Failed to download invoice', {
+        id: downloadToastId,
+      });
     } finally {
-      setDownloadingIds([]);
+      setDownloadingIds((currentDownloadingIds) =>
+        currentDownloadingIds.filter((downloadingId) => downloadingId !== invoice.id),
+      );
     }
   };
 
@@ -260,6 +315,36 @@ export function Invoices() {
               Search, review, download, and manage every invoice in{' '}
               {activeCompany?.name ?? 'your active company'}.
             </p>
+            {canFilterInvoicesByRole ? (
+              <div className="mt-4 flex flex-col gap-3">
+                <div className="flex flex-wrap gap-2">
+                  {INVOICE_ROLE_FILTERS.map((availableRole) => {
+                    const isActive = roleFilter === availableRole;
+
+                    return (
+                      <button
+                        key={availableRole}
+                        type="button"
+                        onClick={() => setRoleFilter(availableRole)}
+                        className={cn(
+                          'inline-flex items-center rounded-full border px-3 py-2 text-sm font-medium transition',
+                          isActive
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'border-border bg-card text-card-foreground hover:bg-muted',
+                        )}
+                      >
+                        {getCompanyRoleLabel(availableRole)}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {roleFilter === activeRole
+                    ? `Showing your ${getCompanyRoleLabel(roleFilter).toLowerCase()} invoices by default.`
+                    : `Showing invoices created by ${getCompanyRoleLabel(roleFilter).toLowerCase()} members in this workspace.`}
+                </p>
+              </div>
+            ) : null}
           </div>
 
           <div className="flex w-full flex-col gap-3 xl:max-w-3xl xl:flex-row xl:items-center xl:justify-end">
@@ -392,7 +477,11 @@ export function Invoices() {
                               title="Download PDF"
                               aria-label={`Download invoice ${invoice.invoiceNo} as PDF`}
                             >
-                              <Download className="h-4 w-4" />
+                              {isDownloadingInvoice ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Download className="h-4 w-4" />
+                              )}
                             </Button>
                             <Button
                               variant="ghost"
@@ -424,38 +513,6 @@ export function Invoices() {
           )}
         </section>
       </main>
-
-      {deleteConfirm.isOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button
-            type="button"
-            aria-label="Close deletion confirmation"
-            className="absolute inset-0 bg-foreground/20 backdrop-blur-sm"
-            onClick={closeDeleteConfirm}
-          />
-          <div className="relative z-10 w-full max-w-md rounded-xl border border-border bg-popover p-6 text-popover-foreground shadow-xl">
-            <h3 className="mb-2 text-xl font-bold text-popover-foreground">Confirm Deletion</h3>
-            <p className="mb-6 text-sm text-muted-foreground">
-              Are you sure you want to delete {deleteConfirm.count}{' '}
-              {deleteConfirm.count === 1 ? 'invoice' : 'invoices'}? This action cannot be undone.
-            </p>
-            <div className="flex justify-end gap-3">
-              <Button variant="outline" onClick={closeDeleteConfirm}>
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={() => {
-                  void deleteConfirm.onConfirm();
-                  closeDeleteConfirm();
-                }}
-              >
-                Delete
-              </Button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

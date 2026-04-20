@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { AppHeader } from '../components/layout/AppHeader';
 import { Button } from '../components/ui/Button';
 import { apiRequest } from '../lib/api';
+import { type CompanyRole, getCompanyRoleLabel } from '../lib/company';
 import { formatCurrency } from '../lib/utils';
 import { useWorkspace } from '../lib/workspace';
 
@@ -18,6 +19,7 @@ type DashboardRecentInvoice = {
 };
 
 type DashboardSummary = {
+  appliedRoleFilter: CompanyRole;
   recentInvoices: DashboardRecentInvoice[];
   totalInvoices: number;
   totalRevenue: number;
@@ -25,11 +27,15 @@ type DashboardSummary = {
 };
 
 const EMPTY_DASHBOARD_SUMMARY: DashboardSummary = {
+  appliedRoleFilter: 'member',
   recentInvoices: [],
   totalInvoices: 0,
   totalRevenue: 0,
   uniqueClients: 0,
 };
+
+const DASHBOARD_ROLE_FILTERS: CompanyRole[] = ['owner', 'admin', 'member'];
+const dashboardCache = new Map<string, DashboardSummary>();
 
 type StatCardProps = {
   icon: React.ReactNode;
@@ -54,21 +60,42 @@ function StatCard({ icon, label, value }: StatCardProps) {
 export function Dashboard() {
   const navigate = useNavigate();
   const { activeCompany } = useWorkspace();
+  const [roleFilter, setRoleFilter] = useState<CompanyRole>('member');
   const [dashboard, setDashboard] = useState<DashboardSummary>(EMPTY_DASHBOARD_SUMMARY);
   const [isLoading, setIsLoading] = useState(true);
+  const canFilterInvoicesByRole = activeCompany?.permissions.canManageMembers ?? false;
+  const activeRole = activeCompany?.membershipRole ?? 'member';
+
+  useEffect(() => {
+    setRoleFilter(activeRole);
+  }, [activeCompany?.id, activeRole]);
 
   useEffect(() => {
     let isCancelled = false;
+    const cacheKey = activeCompany ? `${activeCompany.id}:${roleFilter}` : null;
 
     const fetchDashboard = async () => {
-      setIsLoading(true);
+      const cachedDashboard = cacheKey ? dashboardCache.get(cacheKey) : undefined;
+
+      if (cachedDashboard) {
+        setDashboard(cachedDashboard);
+        setIsLoading(false);
+      } else {
+        setIsLoading(true);
+      }
 
       try {
-        const data = await apiRequest<DashboardSummary>('/api/dashboard');
+        const query = canFilterInvoicesByRole
+          ? `?roleFilter=${encodeURIComponent(roleFilter)}`
+          : '';
+        const data = await apiRequest<DashboardSummary>(`/api/dashboard${query}`);
         if (isCancelled) {
           return;
         }
 
+        if (cacheKey) {
+          dashboardCache.set(cacheKey, data);
+        }
         setDashboard(data);
       } catch (error) {
         if (isCancelled) {
@@ -97,7 +124,7 @@ export function Dashboard() {
     return () => {
       isCancelled = true;
     };
-  }, [activeCompany?.id]);
+  }, [activeCompany?.id, canFilterInvoicesByRole, roleFilter]);
 
   return (
     <div className="min-h-screen bg-background text-foreground pb-24 sm:pb-0">
@@ -111,6 +138,35 @@ export function Dashboard() {
           <p className="mt-1 text-muted-foreground">
             Here&apos;s an overview of the invoicing activity in your active company workspace.
           </p>
+          {canFilterInvoicesByRole ? (
+            <div className="mt-4 flex flex-col gap-3">
+              <div className="flex flex-wrap gap-2">
+                {DASHBOARD_ROLE_FILTERS.map((availableRole) => {
+                  const isActive = roleFilter === availableRole;
+
+                  return (
+                    <button
+                      key={availableRole}
+                      type="button"
+                      onClick={() => setRoleFilter(availableRole)}
+                      className={`inline-flex items-center rounded-full border px-3 py-2 text-sm font-medium transition ${
+                        isActive
+                          ? 'border-primary bg-primary text-primary-foreground'
+                          : 'border-border bg-card text-card-foreground hover:bg-muted'
+                      }`}
+                    >
+                      {getCompanyRoleLabel(availableRole)}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {roleFilter === activeRole
+                  ? `Showing your ${getCompanyRoleLabel(roleFilter).toLowerCase()} invoices by default.`
+                  : `Showing invoices created by ${getCompanyRoleLabel(roleFilter).toLowerCase()} members in this workspace.`}
+              </p>
+            </div>
+          ) : null}
         </section>
 
         <section className="grid grid-cols-1 gap-6 md:grid-cols-3">

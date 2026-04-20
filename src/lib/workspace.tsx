@@ -15,6 +15,7 @@ type WorkspaceContextValue = CompaniesResponse & {
   isLoading: boolean;
   isReady: boolean;
   error: string | null;
+  resolvedSessionKey: string | null;
   refreshWorkspace: () => Promise<void>;
   switchCompany: (companyId: string) => Promise<void>;
 };
@@ -31,13 +32,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const { data: session, isPending: isSessionPending } = authClient.useSession();
   const [workspace, setWorkspace] = useState<CompaniesResponse>(defaultWorkspaceState);
   const [isLoading, setIsLoading] = useState(false);
-  const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resolvedSessionKey, setResolvedSessionKey] = useState<string | null>(null);
   const isMountedRef = useRef(true);
-  const loadedSessionKeyRef = useRef<string | null>(null);
   const sessionUserId = session?.user?.id ?? null;
   const sessionUserRole = session?.user?.role ?? null;
   const sessionKey = sessionUserId ?? '__anonymous__';
+  const isReady = !isSessionPending && resolvedSessionKey === sessionKey;
 
   const refreshWorkspace = useCallback(async () => {
     if (!sessionUserId) {
@@ -45,7 +46,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         setWorkspace(defaultWorkspaceState);
         setError(null);
         setIsLoading(false);
-        setIsReady(true);
+        setResolvedSessionKey(sessionKey);
       }
       return;
     }
@@ -60,6 +61,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       }
 
       setWorkspace(data);
+      setResolvedSessionKey(sessionKey);
     } catch (requestError) {
       if (!isMountedRef.current) {
         return;
@@ -80,13 +82,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           isGlobalAdmin: sessionUserRole === 'admin',
         };
       });
+      setResolvedSessionKey(sessionKey);
     } finally {
       if (isMountedRef.current) {
         setIsLoading(false);
-        setIsReady(true);
       }
     }
-  }, [sessionUserId, sessionUserRole]);
+  }, [sessionKey, sessionUserId, sessionUserRole]);
 
   const switchCompany = useCallback(async (companyId: string) => {
     const nextWorkspace = await apiRequest<CompaniesResponse>('/api/companies/active', {
@@ -100,20 +102,19 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
     setWorkspace(nextWorkspace);
     setError(null);
-    setIsReady(true);
-  }, []);
+    setResolvedSessionKey(sessionKey);
+  }, [sessionKey]);
 
   useEffect(() => {
     if (!isMountedRef.current) {
       return;
     }
 
-    loadedSessionKeyRef.current = null;
     setWorkspace(defaultWorkspaceState);
     setError(null);
     setIsLoading(false);
-    setIsReady(sessionUserId === null);
-  }, [sessionKey, sessionUserId]);
+    setResolvedSessionKey(sessionUserId === null && !isSessionPending ? sessionKey : null);
+  }, [isSessionPending, sessionKey, sessionUserId]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -123,19 +124,18 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       };
     }
 
-    if (loadedSessionKeyRef.current === sessionKey) {
+    if (resolvedSessionKey === sessionKey) {
       return () => {
         isMountedRef.current = false;
       };
     }
 
-    loadedSessionKeyRef.current = sessionKey;
     void refreshWorkspace();
 
     return () => {
       isMountedRef.current = false;
     };
-  }, [isSessionPending, refreshWorkspace, sessionKey]);
+  }, [isSessionPending, refreshWorkspace, resolvedSessionKey, sessionKey]);
 
   const value = useMemo<WorkspaceContextValue>(
     () => ({
@@ -143,10 +143,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       isLoading,
       isReady,
       error,
+      resolvedSessionKey,
       refreshWorkspace,
       switchCompany,
     }),
-    [error, isLoading, isReady, refreshWorkspace, switchCompany, workspace],
+    [error, isLoading, isReady, refreshWorkspace, resolvedSessionKey, switchCompany, workspace],
   );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

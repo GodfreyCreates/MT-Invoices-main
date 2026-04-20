@@ -27,6 +27,8 @@ type HeaderProps = {
   contentClassName?: string;
   user?: HeaderUser | null;
   onSignOut?: () => void | Promise<void>;
+  showPrimaryLinks?: boolean;
+  canAccessCompanies?: boolean;
 };
 
 type HeaderBrandProps = {
@@ -64,7 +66,16 @@ function getUserInitials(user?: HeaderUser | null) {
     .toUpperCase();
 }
 
-export function Header({ left, right, className, contentClassName, user, onSignOut }: HeaderProps) {
+export function Header({
+  left,
+  right,
+  className,
+  contentClassName,
+  user,
+  onSignOut,
+  showPrimaryLinks = true,
+  canAccessCompanies = false,
+}: HeaderProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
@@ -77,10 +88,10 @@ export function Header({ left, right, className, contentClassName, user, onSignO
   const menuLinks = useMemo<HeaderMenuLink[]>(
     () => [
       {
-        href: '/',
+        href: '/dashboard',
         icon: LayoutDashboard,
         label: 'Dashboard',
-        matches: (pathname) => pathname === '/',
+        matches: (pathname) => pathname === '/' || pathname === '/dashboard',
       },
       {
         href: '/invoices',
@@ -111,10 +122,13 @@ export function Header({ left, right, className, contentClassName, user, onSignO
           ]
         : []),
     ],
-    [isAdmin],
+    [canAccessCompanies, isAdmin],
+  );
+  const visibleMenuLinks = menuLinks.filter(
+    (link) => canAccessCompanies || (link.href !== '/companies' && !link.href.startsWith('/company')),
   );
   const desktopPrimaryLinks = menuLinks.filter(
-    (link) => link.href === '/' || link.href === '/invoices',
+    (link) => link.href === '/dashboard' || link.href === '/invoices',
   );
   useEffect(() => {
     if (!isMenuOpen) {
@@ -168,17 +182,19 @@ export function Header({ left, right, className, contentClassName, user, onSignO
         <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-4">{left}</div>
         {(right || user) && (
           <div className="flex shrink-0 items-center justify-end gap-2 sm:gap-3 lg:gap-4">
-            {desktopPrimaryLinks.map((link) => (
-              <Button
-                key={link.href}
-                variant={link.matches(location.pathname) ? 'default' : 'outline'}
-                onClick={() => handleNavigate(link.href)}
-                className="hidden gap-2 md:flex"
-              >
-                <link.icon className="h-4 w-4" />
-                {link.label}
-              </Button>
-            ))}
+            {showPrimaryLinks
+              ? desktopPrimaryLinks.map((link) => (
+                  <Button
+                    key={link.href}
+                    variant={link.matches(location.pathname) ? 'default' : 'outline'}
+                    onClick={() => handleNavigate(link.href)}
+                    className="hidden gap-2 md:flex"
+                  >
+                    <link.icon className="h-4 w-4" />
+                    {link.label}
+                  </Button>
+                ))
+              : null}
             {right}
             {user ? (
               <div className="relative" ref={menuRef}>
@@ -240,7 +256,7 @@ export function Header({ left, right, className, contentClassName, user, onSignO
                     </div>
 
                     <div className="hidden border-b border-slate-200 p-2 sm:block">
-                      {menuLinks.map((link) => {
+                      {visibleMenuLinks.map((link) => {
                         const isActive = link.matches(location.pathname);
 
                         return (

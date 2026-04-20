@@ -8,26 +8,19 @@ Create a `.env` file with:
 
 ```env
 APP_URL=https://app.example.com
-AUTH_ALLOWED_HOSTS=app.example.com,www.example.com,localhost:3000,localhost:5173
-DATABASE_URL=postgresql://...
-BETTER_AUTH_SECRET=replace-with-a-long-random-secret
-TRUSTED_ORIGINS=http://localhost:3000
+APP_SECRET=replace-with-a-long-random-secret
+SUPABASE_DB_URL=postgresql://postgres.project:password@aws-0-region.pooler.supabase.com:6543/postgres
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
 ```
 
-`APP_URL` is the canonical public origin used for invitations and email verification links.
+`APP_URL` is the canonical public origin used for invitations and Supabase email links.
+`SUPABASE_DB_URL` should point to your Supabase Postgres connection string.
+`SUPABASE_SERVICE_ROLE_KEY` is required for trusted server-side auth admin operations. Never expose it to the browser.
+
 On Vercel, if `APP_URL` is not set, the app falls back to `VERCEL_PROJECT_PRODUCTION_URL` and then `VERCEL_URL`.
-
-`AUTH_ALLOWED_HOSTS` is optional and accepts a comma-separated list of additional auth hosts or host patterns. Use hostnames only, not full URLs.
-
-Frontend auth and API requests are same-origin.
-
-`TRUSTED_ORIGINS` is optional and accepts a comma-separated list of additional absolute origins for true cross-origin auth callers.
-
 `SITE_URL` is still accepted as a deprecated fallback for one transition window, but new deployments should use `APP_URL`.
-
-For production domains, the auth host allow-list now also accepts common apex/`www` aliases automatically (for example, configuring `app.example.com` also allows `www.app.example.com`).
-
-On Vercel, `VERCEL_URL` / `VERCEL_BRANCH_URL` and `APP_URL` are used to build the auth host allow-list.
 
 ## Run Locally
 

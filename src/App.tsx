@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Suspense, lazy } from 'react';
+import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { Dashboard } from './pages/Dashboard';
@@ -17,22 +17,12 @@ import { UsersPage } from './pages/UsersPage';
 import { CompaniesPage } from './pages/CompaniesPage';
 import { CompanySetupPage } from './pages/CompanySetupPage';
 import { InvoicePrintPage } from './pages/InvoicePrintPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { ConfirmationProvider } from './components/ui/ConfirmationProvider';
 import { MobileNav } from './components/layout/MobileNav';
 import { BrandingProvider } from './lib/branding';
 import { WorkspaceProvider } from './lib/workspace';
-
-const SettingsPage = lazy(() =>
-  import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })),
-);
-
-function RouteLoadingState() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4 text-sm text-muted-foreground">
-      Loading settings...
-    </div>
-  );
-}
 
 function AppRoutes() {
   const location = useLocation();
@@ -57,9 +47,7 @@ function AppRoutes() {
           path="/settings"
           element={
             <ProtectedRoute>
-              <Suspense fallback={<RouteLoadingState />}>
-                <SettingsPage />
-              </Suspense>
+              <SettingsPage />
             </ProtectedRoute>
           }
         />
@@ -78,10 +66,12 @@ export default function App() {
   return (
     <BrandingProvider>
       <WorkspaceProvider>
-        <Toaster position="bottom-right" richColors />
-        <BrowserRouter>
-          <AppRoutes />
-        </BrowserRouter>
+        <ConfirmationProvider>
+          <Toaster position="bottom-right" richColors />
+          <BrowserRouter>
+            <AppRoutes />
+          </BrowserRouter>
+        </ConfirmationProvider>
       </WorkspaceProvider>
     </BrandingProvider>
   );

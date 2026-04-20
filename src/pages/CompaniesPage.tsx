@@ -115,7 +115,10 @@ const CompanyCard: React.FC<CompanyCardProps> = ({
 export function CompaniesPage() {
   const navigate = useNavigate();
   const workspace = useWorkspace();
-  const [isCreateOpen, setIsCreateOpen] = useState(workspace.companies.length === 0);
+  const canCreateCompany = workspace.isGlobalAdmin;
+  const [isCreateOpen, setIsCreateOpen] = useState(
+    workspace.isGlobalAdmin && workspace.companies.length === 0,
+  );
   const [isCreating, setIsCreating] = useState(false);
   const [form, setForm] = useState(createEmptyCompanyFormValues());
   const [users, setUsers] = useState<UserOption[]>([]);
@@ -163,6 +166,11 @@ export function CompaniesPage() {
   };
 
   const openCreate = () => {
+    if (!canCreateCompany) {
+      toast.error('Only admin users can create companies');
+      return;
+    }
+
     setIsCreateOpen(true);
   };
 
@@ -174,6 +182,11 @@ export function CompaniesPage() {
 
   const handleCreateCompany = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!canCreateCompany) {
+      toast.error('Only admin users can create companies');
+      return;
+    }
+
     setIsCreating(true);
 
     try {
@@ -281,10 +294,12 @@ export function CompaniesPage() {
               >
                 Refresh
               </Button>
-              <Button onClick={openCreate} className="h-11 rounded-2xl px-4 gap-2">
-                <Plus className="h-4 w-4" />
-                Create company
-              </Button>
+              {canCreateCompany ? (
+                <Button onClick={openCreate} className="h-11 rounded-2xl px-4 gap-2">
+                  <Plus className="h-4 w-4" />
+                  Create company
+                </Button>
+              ) : null}
             </div>
           </div>
 
@@ -306,9 +321,13 @@ export function CompaniesPage() {
           {workspace.companies.length === 0 ? (
             <div className="mt-8 rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center">
               <Building2 className="mx-auto h-10 w-10 text-slate-400" />
-              <h2 className="mt-4 text-xl font-semibold text-slate-900">No companies yet</h2>
+              <h2 className="mt-4 text-xl font-semibold text-slate-900">
+                {canCreateCompany ? 'No companies yet' : 'No company access yet'}
+              </h2>
               <p className="mt-2 text-sm text-slate-500">
-                Create your first company to unlock the dashboard, invoice creation, and company-scoped settings.
+                {canCreateCompany
+                  ? 'Create your first company to unlock the dashboard, invoice creation, and company-scoped settings.'
+                  : 'An administrator needs to create a company and assign you before you can use a workspace.'}
               </p>
             </div>
           ) : null}

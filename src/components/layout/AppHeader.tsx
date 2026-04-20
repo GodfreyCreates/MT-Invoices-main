@@ -13,6 +13,14 @@ function getWorkspaceSubtitle(role?: string | null) {
   return role?.toLowerCase() === 'admin' ? 'Super Admin' : 'Invoice Workspace';
 }
 
+function canAccessCompanyControls(workspace: ReturnType<typeof useWorkspace>) {
+  if (workspace.isGlobalAdmin) {
+    return true;
+  }
+
+  return workspace.activeCompany?.permissions.canEditCompany ?? false;
+}
+
 function CompanySwitcher() {
   const navigate = useNavigate();
   const workspace = useWorkspace();
@@ -183,6 +191,7 @@ type AppHeaderProps = {
   className?: string;
   contentClassName?: string;
   showCreateInvoice?: boolean;
+  showPrimaryLinks?: boolean;
 };
 
 export function AppHeader({
@@ -190,11 +199,13 @@ export function AppHeader({
   className,
   contentClassName,
   showCreateInvoice = true,
+  showPrimaryLinks = true,
 }: AppHeaderProps) {
   const navigate = useNavigate();
   const { data: session } = authClient.useSession();
   const { resolvedLogoSrc } = useBranding();
   const workspace = useWorkspace();
+  const showCompanyControls = canAccessCompanyControls(workspace);
 
   const handleSignOut = async () => {
     await authClient.signOut();
@@ -215,10 +226,12 @@ export function AppHeader({
         />
       }
       user={session?.user}
+      canAccessCompanies={showCompanyControls}
       onSignOut={handleSignOut}
+      showPrimaryLinks={showPrimaryLinks}
       right={
         <>
-          <CompanySwitcher />
+          {showCompanyControls ? <CompanySwitcher /> : null}
           {action}
           {showCreateInvoice && workspace.activeCompany ? (
             <Button onClick={() => navigate('/invoices/new')} className="hidden gap-2 sm:flex">

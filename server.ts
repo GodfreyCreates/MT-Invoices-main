@@ -4,13 +4,10 @@ import fs from "node:fs";
 import { isIP } from "node:net";
 import path from "node:path";
 import { and, asc, count, desc, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
-import { fromNodeHeaders, toNodeHandler } from "better-auth/node";
+import type { User as SupabaseAuthUser } from "@supabase/supabase-js";
 import type { Page } from "puppeteer";
-import { createRouteHandler as createUploadthingRouteHandler } from "uploadthing/express";
 import { db } from "./src/db";
-import { session as authSessions, user as authUsers } from "./src/db/auth-schema";
-import { sendUserInvitationEmail } from "./src/email";
-import { auth } from "./src/lib/auth";
+import { user as authUsers } from "./src/db/auth-schema";
 import type {
   ActiveCompanySummary,
   AdminCompanySummary,
@@ -21,9 +18,13 @@ import type {
   CompanySummary,
 } from "./src/lib/company";
 import { DEFAULT_INVOICE_THEME, isInvoiceThemeId } from "./src/lib/invoice-themes";
-import { getAuthSecret, getPublicAppOrigin } from "./src/lib/server-env";
+import { createSupabaseAdminClient, createSupabaseServerClient } from "./src/lib/supabase-server";
+import { getAppSecret, getPublicAppOrigin } from "./src/lib/server-env";
+import {
+  deleteImageFromStorage,
+  ensureAppStorageBucket,
+} from "./src/lib/storage-server";
 import { companies, companyMemberships, invoices, services, userInvitations } from "./src/db/schema";
-import { deleteUploadThingFiles, uploadRouter } from "./src/uploadthing";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -48,6 +49,7 @@ type SessionRecord = {
     id: string;
     role?: string | null;
   };
+  sessionId?: string | null;
 };
 type CreateAppOptions = {
   serveClientApp?: boolean;
@@ -91,6 +93,7 @@ type SanitizedInvoiceInput = {
 };
 type InviteUserRole = "admin" | "user";
 type CompanyMembershipRole = CompanyRole;
+type DashboardInvoiceRoleFilter = CompanyMembershipRole;
 type SanitizedCompanyInput = {
   name: string;
   email: string;
@@ -112,7 +115,7 @@ type HealthDiagnostic = {
       ok: boolean;
       missing: string[];
     };
-    uploadthing: {
+    storage: {
       ok: boolean;
       configured: boolean;
       message?: string;
@@ -123,7 +126,7 @@ type ApiErrorResponse = {
   error: string;
   requestId?: string;
 };
-type UploadthingRouteState = {
+type StorageRouteState = {
   enabled: boolean;
   errorMessage?: string;
 };
@@ -295,6 +298,26 @@ function getCompanyRole(
   const normalizedRole = value.trim().toLowerCase();
   if (!isCompanyRole(normalizedRole)) {
     throw new HttpError(400, `${field} must be owner, admin, or member`);
+  }
+
+  return normalizedRole;
+}
+
+function getDashboardInvoiceRoleFilter(
+  value: unknown,
+  defaultValue: DashboardInvoiceRoleFilter,
+): DashboardInvoiceRoleFilter {
+  if (value == null || value === "") {
+    return defaultValue;
+  }
+
+  if (typeof value !== "string") {
+    throw new HttpError(400, "roleFilter must be a string");
+  }
+
+  const normalizedRole = value.trim().toLowerCase();
+  if (!isCompanyRole(normalizedRole)) {
+    throw new HttpError(400, "roleFilter must be owner, admin, or member");
   }
 
   return normalizedRole;
@@ -986,15 +1009,138 @@ function parseInvoiceInput(value: unknown): SanitizedInvoiceInput {
   };
 }
 
-function buildInvoiceListWhere(companyId: string) {
-  return eq(invoices.companyId, companyId);
+function canManageCompanyInvoices(
+  isGlobalAdmin: boolean,
+  membershipRole: CompanyMembershipRole | null,
+) {
+  return isGlobalAdmin || membershipRole === "owner" || membershipRole === "admin";
 }
 
-function buildInvoiceIdWhere(companyId: string, invoiceId: string) {
-  return and(eq(invoices.id, invoiceId), eq(invoices.companyId, companyId));
+function buildInvoiceCompanyWhere({
+  companyId,
+  userId,
+  canManageInvoices,
+}: {
+  companyId: string;
+  userId: string;
+  canManageInvoices: boolean;
+}) {
+  if (canManageInvoices) {
+    return eq(invoices.companyId, companyId);
+  }
+
+  return and(eq(invoices.companyId, companyId), eq(invoices.userId, userId));
+}
+
+function buildInvoiceIdWhere({
+  companyId,
+  invoiceId,
+  userId,
+  canManageInvoices,
+}: {
+  companyId: string;
+  invoiceId: string;
+  userId: string;
+  canManageInvoices: boolean;
+}) {
+  return and(eq(invoices.id, invoiceId), buildInvoiceCompanyWhere({ companyId, userId, canManageInvoices }));
+}
+
+function getInvoiceAccessScope(access: CompanyAccessContext) {
+  return {
+    companyId: access.activeMembership.companyId,
+    userId: access.userId,
+    membershipRole: access.activeMembership.role,
+    canManageInvoices: canManageCompanyInvoices(
+      access.isGlobalAdmin,
+      access.activeMembership.role,
+    ),
+  };
+}
+
+async function buildDashboardInvoiceWhere(
+  access: CompanyAccessContext,
+  requestedRoleFilter: unknown,
+) {
+  const invoiceAccess = getInvoiceAccessScope(access);
+  const defaultRoleFilter = invoiceAccess.membershipRole;
+  const appliedRoleFilter = getDashboardInvoiceRoleFilter(
+    requestedRoleFilter,
+    defaultRoleFilter,
+  );
+
+  if (!invoiceAccess.canManageInvoices) {
+    return {
+      appliedRoleFilter,
+      where: and(
+        eq(invoices.companyId, invoiceAccess.companyId),
+        eq(invoices.userId, invoiceAccess.userId),
+      ),
+    };
+  }
+
+  if (appliedRoleFilter === invoiceAccess.membershipRole) {
+    return {
+      appliedRoleFilter,
+      where: and(
+        eq(invoices.companyId, invoiceAccess.companyId),
+        eq(invoices.userId, invoiceAccess.userId),
+      ),
+    };
+  }
+
+  const roleMembershipRows = await db
+    .select({ userId: companyMemberships.userId })
+    .from(companyMemberships)
+    .where(
+      and(
+        eq(companyMemberships.companyId, invoiceAccess.companyId),
+        eq(companyMemberships.role, appliedRoleFilter),
+      ),
+    );
+
+  const matchingUserIds = Array.from(
+    new Set(
+      roleMembershipRows
+        .map((membership) => membership.userId)
+        .filter((userId): userId is string => typeof userId === "string" && userId.length > 0),
+    ),
+  );
+
+  if (matchingUserIds.length === 0) {
+    return {
+      appliedRoleFilter,
+      where: and(eq(invoices.companyId, invoiceAccess.companyId), sql`1 = 0`),
+    };
+  }
+
+  return {
+    appliedRoleFilter,
+    where: and(
+      eq(invoices.companyId, invoiceAccess.companyId),
+      inArray(invoices.userId, matchingUserIds),
+    ),
+  };
 }
 
 function getInvoiceRevenueSql() {
+  return sql<number>`
+    coalesce(
+      sum(
+        (
+          cast(${services.quantity} as numeric) * cast(${services.unitPrice} as numeric)
+        ) * (
+          1 - cast(${services.discountPercent} as numeric) / 100
+        ) * (
+          1 + cast(${services.taxPercent} as numeric) / 100
+        )
+      ),
+      0
+    )
+  `;
+}
+
+function getServiceRevenueSql() {
   return sql<number>`
     coalesce(
       sum(
@@ -1039,7 +1185,7 @@ function parseInvoiceIds(value: unknown, field: string) {
 }
 
 function signInvoiceExportPayload(encodedPayload: string) {
-  return createHmac("sha256", getAuthSecret()).update(encodedPayload).digest("base64url");
+  return createHmac("sha256", getAppSecret()).update(encodedPayload).digest("base64url");
 }
 
 function createInvoiceExportToken(companyId: string, invoiceIds: string[]) {
@@ -1313,18 +1459,236 @@ function assertInvitationIsOpen(invitation: {
   }
 }
 
-async function getAuthenticatedSession(req: Request, res: Response) {
+const supabaseAuth = createSupabaseServerClient();
+
+function getBearerToken(req: Request) {
+  const authorization = req.headers.authorization;
+  if (!authorization) {
+    return null;
+  }
+
+  const [scheme, token] = authorization.split(" ");
+  if (scheme?.toLowerCase() !== "bearer" || !token) {
+    return null;
+  }
+
+  return token.trim();
+}
+
+function getSupabaseUserName(user: SupabaseAuthUser) {
+  const metadataName = user.user_metadata?.name;
+  if (typeof metadataName === "string" && metadataName.trim()) {
+    return metadataName.trim();
+  }
+
+  if (user.email) {
+    const [localPart] = user.email.split("@");
+    if (localPart?.trim()) {
+      return localPart.trim();
+    }
+  }
+
+  return "User";
+}
+
+function decodeJwtPayload(token: string) {
+  const [, payloadSegment] = token.split(".");
+  if (!payloadSegment) {
+    return null;
+  }
+
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
+    const normalizedPayload = payloadSegment.replace(/-/g, "+").replace(/_/g, "/");
+    const paddedPayload = normalizedPayload.padEnd(Math.ceil(normalizedPayload.length / 4) * 4, "=");
+    const decodedPayload = Buffer.from(paddedPayload, "base64").toString("utf8");
+    return JSON.parse(decodedPayload) as { session_id?: string };
+  } catch {
+    return null;
+  }
+}
+
+function getSessionIdFromAccessToken(accessToken: string) {
+  const payload = decodeJwtPayload(accessToken);
+  return typeof payload?.session_id === "string" && payload.session_id.trim()
+    ? payload.session_id.trim()
+    : null;
+}
+
+async function createOrMigrateUserProfile(supabaseUser: SupabaseAuthUser) {
+  const email = supabaseUser.email?.trim().toLowerCase();
+  if (!email) {
+    throw new HttpError(400, "Authenticated user is missing an email address");
+  }
+
+  const profileName = getSupabaseUserName(supabaseUser);
+  const now = new Date();
+  const [existingById] = await db
+    .select({
+      id: authUsers.id,
+      name: authUsers.name,
+      email: authUsers.email,
+      role: authUsers.role,
+      emailVerified: authUsers.emailVerified,
+      image: authUsers.image,
+    })
+    .from(authUsers)
+    .where(eq(authUsers.id, supabaseUser.id))
+    .limit(1);
+
+  if (existingById) {
+    await db
+      .update(authUsers)
+      .set({
+        email,
+        name: profileName,
+        emailVerified: Boolean(supabaseUser.email_confirmed_at),
+        image:
+          typeof supabaseUser.user_metadata?.avatar_url === "string"
+            ? supabaseUser.user_metadata.avatar_url
+            : existingById.image,
+        lastSeenAt: now,
+        updatedAt: now,
+      })
+      .where(eq(authUsers.id, supabaseUser.id));
+
+    return {
+      id: existingById.id,
+      email,
+      name: profileName,
+      role: existingById.role ?? "user",
+      emailVerified: Boolean(supabaseUser.email_confirmed_at),
+      image: existingById.image ?? null,
+    };
+  }
+
+  const [legacyProfile] = await db
+    .select()
+    .from(authUsers)
+    .where(eq(authUsers.email, email))
+    .limit(1);
+
+  if (legacyProfile) {
+    const archivedEmail = `${legacyProfile.email}__legacy_${legacyProfile.id}`;
+
+    await db
+      .update(authUsers)
+      .set({
+        email: archivedEmail,
+        updatedAt: now,
+      })
+      .where(eq(authUsers.id, legacyProfile.id));
+
+    await db.insert(authUsers).values({
+      id: supabaseUser.id,
+      name: profileName,
+      email,
+      emailVerified: Boolean(supabaseUser.email_confirmed_at),
+      image:
+        typeof supabaseUser.user_metadata?.avatar_url === "string"
+          ? supabaseUser.user_metadata.avatar_url
+          : legacyProfile.image,
+      activeCompanyId: legacyProfile.activeCompanyId,
+      siteLogoUrl: legacyProfile.siteLogoUrl,
+      siteLogoKey: legacyProfile.siteLogoKey,
+      documentLogoUrl: legacyProfile.documentLogoUrl,
+      documentLogoKey: legacyProfile.documentLogoKey,
+      companyLogoUrl: legacyProfile.companyLogoUrl,
+      companyLogoKey: legacyProfile.companyLogoKey,
+      lastSeenAt: now,
+      createdAt: legacyProfile.createdAt,
+      updatedAt: now,
+      role: legacyProfile.role,
+      banned: legacyProfile.banned,
+      banReason: legacyProfile.banReason,
+      banExpires: legacyProfile.banExpires,
     });
 
-    if (!session) {
+    await db
+      .update(companies)
+      .set({ createdByUserId: supabaseUser.id, updatedAt: now })
+      .where(eq(companies.createdByUserId, legacyProfile.id));
+    await db
+      .update(companyMemberships)
+      .set({ userId: supabaseUser.id, updatedAt: now })
+      .where(eq(companyMemberships.userId, legacyProfile.id));
+    await db
+      .update(invoices)
+      .set({ userId: supabaseUser.id, updatedAt: now })
+      .where(eq(invoices.userId, legacyProfile.id));
+    await db
+      .update(userInvitations)
+      .set({ inviterUserId: supabaseUser.id, updatedAt: now })
+      .where(eq(userInvitations.inviterUserId, legacyProfile.id));
+
+    await db.delete(authUsers).where(eq(authUsers.id, legacyProfile.id));
+
+    return {
+      id: supabaseUser.id,
+      email,
+      name: profileName,
+      role: legacyProfile.role ?? "user",
+      emailVerified: Boolean(supabaseUser.email_confirmed_at),
+      image: legacyProfile.image ?? null,
+    };
+  }
+
+  const [{ count: userCount }] = await db.select({ count: count() }).from(authUsers);
+  const role = userCount === 0 ? "admin" : "user";
+
+  await db.insert(authUsers).values({
+    id: supabaseUser.id,
+    name: profileName,
+    email,
+    emailVerified: Boolean(supabaseUser.email_confirmed_at),
+    image:
+      typeof supabaseUser.user_metadata?.avatar_url === "string"
+        ? supabaseUser.user_metadata.avatar_url
+        : null,
+    lastSeenAt: now,
+    createdAt: now,
+    updatedAt: now,
+    role,
+  });
+
+  return {
+    id: supabaseUser.id,
+    email,
+    name: profileName,
+    role,
+    emailVerified: Boolean(supabaseUser.email_confirmed_at),
+    image:
+      typeof supabaseUser.user_metadata?.avatar_url === "string"
+        ? supabaseUser.user_metadata.avatar_url
+        : null,
+  };
+}
+
+async function getAuthenticatedSession(req: Request, res: Response) {
+  try {
+    const accessToken = getBearerToken(req);
+    if (!accessToken) {
       res.status(401).json({ error: "Unauthorized" });
       return null;
     }
 
-    return session as SessionRecord;
+    const {
+      data: { user },
+      error,
+    } = await supabaseAuth.auth.getUser(accessToken);
+
+    if (error || !user) {
+      res.status(401).json({ error: "Unauthorized" });
+      return null;
+    }
+
+    const profile = await createOrMigrateUserProfile(user);
+    return {
+      user: {
+        id: profile.id,
+        role: profile.role,
+      },
+      sessionId: getSessionIdFromAccessToken(accessToken),
+    } satisfies SessionRecord;
   } catch (error) {
     console.error("Failed to resolve session", error);
     res.status(401).json({ error: "Unauthorized" });
@@ -1334,15 +1698,138 @@ async function getAuthenticatedSession(req: Request, res: Response) {
 
 async function getOptionalSession(req: Request) {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const accessToken = getBearerToken(req);
+    if (!accessToken) {
+      return null;
+    }
 
-    return (session as SessionRecord | null) ?? null;
+    const {
+      data: { user },
+      error,
+    } = await supabaseAuth.auth.getUser(accessToken);
+
+    if (error || !user) {
+      return null;
+    }
+
+    const profile = await createOrMigrateUserProfile(user);
+    return {
+      user: {
+        id: profile.id,
+        role: profile.role,
+      },
+      sessionId: getSessionIdFromAccessToken(accessToken),
+    } satisfies SessionRecord;
   } catch (error) {
     console.error("Failed to resolve session", error);
     return null;
   }
+}
+
+type AuthSessionListItem = {
+  id: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  expiresAt: string | null;
+  userAgent: string | null;
+  ipAddress: string | null;
+};
+
+async function listAuthSessions(userId: string): Promise<AuthSessionListItem[]> {
+  const result = await db.execute(sql`
+    select
+      s.id::text as id,
+      s.created_at as "createdAt",
+      coalesce(s.refreshed_at::timestamptz, s.updated_at, s.created_at) as "updatedAt",
+      s.not_after as "expiresAt",
+      s.user_agent as "userAgent",
+      host(s.ip) as "ipAddress"
+    from auth.sessions s
+    where s.user_id = ${userId}::uuid
+    order by coalesce(s.refreshed_at::timestamptz, s.updated_at, s.created_at) desc, s.created_at desc
+  `);
+
+  return Array.from(result as Iterable<Record<string, unknown>>).map((row) => ({
+    id: String(row.id),
+    createdAt: row.createdAt ? String(row.createdAt) : null,
+    updatedAt: row.updatedAt ? String(row.updatedAt) : null,
+    expiresAt: row.expiresAt ? String(row.expiresAt) : null,
+    userAgent: row.userAgent ? String(row.userAgent) : null,
+    ipAddress: row.ipAddress ? String(row.ipAddress) : null,
+  }));
+}
+
+async function deleteAuthSession(userId: string, sessionId: string) {
+  const deletedRows = await db.execute(sql`
+    delete from auth.sessions
+    where id = ${sessionId}::uuid
+      and user_id = ${userId}::uuid
+    returning id::text as id
+  `);
+
+  return Array.from(deletedRows as Iterable<Record<string, unknown>>).length > 0;
+}
+
+async function deleteOtherAuthSessions(userId: string, currentSessionId: string | null | undefined) {
+  if (!currentSessionId) {
+    return;
+  }
+
+  await db.execute(sql`
+    delete from auth.sessions
+    where user_id = ${userId}::uuid
+      and id <> ${currentSessionId}::uuid
+  `);
+}
+
+async function deleteAllAuthSessions(userId: string) {
+  await db.execute(sql`
+    delete from auth.sessions
+    where user_id = ${userId}::uuid
+  `);
+}
+
+async function deleteUserAccount(targetUserId: string) {
+  const [targetUser] = await db
+    .select({
+      id: authUsers.id,
+      siteLogoKey: authUsers.siteLogoKey,
+      documentLogoKey: authUsers.documentLogoKey,
+      companyLogoKey: authUsers.companyLogoKey,
+    })
+    .from(authUsers)
+    .where(eq(authUsers.id, targetUserId))
+    .limit(1);
+
+  if (!targetUser) {
+    throw new HttpError(404, "User not found");
+  }
+
+  await deleteAllAuthSessions(targetUserId);
+
+  for (const storageKey of [
+    targetUser.siteLogoKey,
+    targetUser.documentLogoKey,
+    targetUser.companyLogoKey,
+  ]) {
+    if (!storageKey) {
+      continue;
+    }
+
+    try {
+      await deleteImageFromStorage(storageKey);
+    } catch (error) {
+      console.error("Failed to delete user-owned storage object", error);
+    }
+  }
+
+  const supabaseAdmin = createSupabaseAdminClient();
+  const { error: deleteAuthUserError } = await supabaseAdmin.auth.admin.deleteUser(targetUserId);
+  if (deleteAuthUserError) {
+    throw new HttpError(500, deleteAuthUserError.message);
+  }
+
+  await db.delete(authUsers).where(eq(authUsers.id, targetUserId));
 }
 
 function handleRouteError(res: Response, error: unknown, defaultMessage: string) {
@@ -1386,9 +1873,9 @@ async function removeUserLogo(userId: string, logoKind: "site" | "document") {
 
   if (logoKeyToDelete) {
     try {
-      await deleteUploadThingFiles(logoKeyToDelete);
+      await deleteImageFromStorage(logoKeyToDelete);
     } catch (error) {
-      console.error("Failed to delete logo from UploadThing", error);
+      console.error("Failed to delete logo from Supabase Storage", error);
     }
   }
 }
@@ -1413,15 +1900,21 @@ async function removeCompanyDocumentLogo(companyId: string) {
 
   if (currentCompany?.documentLogoKey) {
     try {
-      await deleteUploadThingFiles(currentCompany.documentLogoKey);
+      await deleteImageFromStorage(currentCompany.documentLogoKey);
     } catch (error) {
-      console.error("Failed to delete company logo from UploadThing", error);
+      console.error("Failed to delete company logo from Supabase Storage", error);
     }
   }
 }
 
 function getMissingRequiredEnvVars() {
-  const requiredEnvVarNames = ["DATABASE_URL", "BETTER_AUTH_SECRET"];
+  const requiredEnvVarNames = [
+    "SUPABASE_DB_URL",
+    "APP_SECRET",
+    "VITE_SUPABASE_URL",
+    "VITE_SUPABASE_PUBLISHABLE_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+  ];
 
   return requiredEnvVarNames.filter((name) => {
     const value = process.env[name];
@@ -1429,8 +1922,8 @@ function getMissingRequiredEnvVars() {
   });
 }
 
-function getHealthStatus(requiredEnvOk: boolean, uploadthingOk: boolean): HealthDiagnostic["status"] {
-  if (requiredEnvOk && uploadthingOk) {
+function getHealthStatus(requiredEnvOk: boolean, storageOk: boolean): HealthDiagnostic["status"] {
+  if (requiredEnvOk && storageOk) {
     return "ok";
   }
 
@@ -1454,22 +1947,15 @@ function getApiErrorResponse(errorMessage: string, requestId?: string): ApiError
   return requestId ? { error: errorMessage, requestId } : { error: errorMessage };
 }
 
-function getUploadthingRouteState(): UploadthingRouteState {
+async function getStorageRouteState(): Promise<StorageRouteState> {
   try {
-    const token = process.env.UPLOADTHING_TOKEN?.trim();
-    if (!token) {
-      return {
-        enabled: false,
-        errorMessage: "UploadThing is not configured on this deployment",
-      };
-    }
-
+    await ensureAppStorageBucket();
     return { enabled: true };
   } catch (error) {
-    console.error("Failed to resolve UploadThing route state", error);
+    console.error("Failed to resolve Supabase Storage route state", error);
     return {
       enabled: false,
-      errorMessage: "UploadThing initialization failed",
+      errorMessage: "Supabase Storage initialization failed",
     };
   }
 }
@@ -1496,255 +1982,28 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
     res.status(400).json(getApiErrorResponse("Invalid JSON payload", requestId));
   });
 
-  const uploadthingRouteState = getUploadthingRouteState();
-  if (uploadthingRouteState.enabled) {
-    try {
-      app.use("/api/uploadthing", createUploadthingRouteHandler({ router: uploadRouter }));
-    } catch (error) {
-      const fallbackErrorMessage = "UploadThing initialization failed";
-      console.error(fallbackErrorMessage, error);
-      app.use("/api/uploadthing", (req, res) => {
-        const requestId = getRequestId(req);
-        res.status(503).json(getApiErrorResponse(fallbackErrorMessage, requestId));
-      });
-    }
-  } else {
-    app.use("/api/uploadthing", (req, res) => {
-      const requestId = getRequestId(req);
-      console.error(
-        `[${requestId}] UploadThing route disabled: ${uploadthingRouteState.errorMessage ?? "unknown error"}`,
-      );
-      res.status(503).json(
-        getApiErrorResponse(
-          uploadthingRouteState.errorMessage ?? "UploadThing route unavailable",
-          requestId,
-        ),
-      );
-    });
-  }
-
-  const authHandler = toNodeHandler(auth);
-
-  app.all("/api/auth/*", (req, res) => {
-    applyAuthRequestMetadata(req);
-    void Promise.resolve(authHandler(req, res)).catch((error: unknown) => {
-      const requestId = getRequestId(req);
-      console.error(`[${requestId}] Failed to handle auth request`, error);
-
-      if (res.headersSent) {
-        return;
-      }
-
-      const isAllowedHostError =
-        error instanceof Error &&
-        error.name === "BetterAuthError" &&
-        error.message.includes("allowed hosts list");
-
-      res
-        .status(isAllowedHostError ? 400 : 500)
-        .json(
-          getApiErrorResponse(
-            isAllowedHostError ? "Invalid auth host" : "Failed to handle auth request",
-            requestId,
-          ),
-        );
-    });
-  });
-
-  app.get("/api/health", (_req, res) => {
+  app.get("/api/health", async (_req, res) => {
     const missingRequiredEnvVars = getMissingRequiredEnvVars();
-    const uploadthingState = getUploadthingRouteState();
+    const storageState = await getStorageRouteState();
     const requiredEnvOk = missingRequiredEnvVars.length === 0;
-    const uploadthingOk = uploadthingState.enabled;
+    const storageOk = storageState.enabled;
     const health: HealthDiagnostic = {
-      status: getHealthStatus(requiredEnvOk, uploadthingOk),
+      status: getHealthStatus(requiredEnvOk, storageOk),
       timestamp: new Date().toISOString(),
       checks: {
         requiredEnv: {
           ok: requiredEnvOk,
           missing: missingRequiredEnvVars,
         },
-        uploadthing: {
-          ok: uploadthingOk,
-          configured: uploadthingState.enabled,
-          ...(uploadthingState.errorMessage ? { message: uploadthingState.errorMessage } : {}),
+        storage: {
+          ok: storageOk,
+          configured: storageState.enabled,
+          ...(storageState.errorMessage ? { message: storageState.errorMessage } : {}),
         },
       },
     };
 
     res.status(health.status === "ok" ? 200 : 503).json(health);
-  });
-
-  app.post("/api/invitations", async (req, res) => {
-    const session = await getAuthenticatedSession(req, res);
-    if (!session) {
-      return;
-    }
-
-    if (!isAdminSession(session)) {
-      res.status(403).json({ error: "Only admins can send invitations" });
-      return;
-    }
-
-    try {
-      const payload = getRecord(req.body, "request body");
-      const email = getEmail(payload.email, "email");
-      const role = getInviteRole(payload.role, "role");
-
-      const [inviter, existingUser] = await Promise.all([
-        db
-          .select({
-            name: authUsers.name,
-          })
-          .from(authUsers)
-          .where(eq(authUsers.id, session.user.id))
-          .limit(1),
-        db
-          .select({ id: authUsers.id })
-          .from(authUsers)
-          .where(eq(authUsers.email, email))
-          .limit(1),
-      ]);
-
-      if (existingUser[0]) {
-        throw new HttpError(409, "A user with this email already exists");
-      }
-
-      const now = new Date();
-      const expiresAt = new Date(now.getTime() + INVITATION_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
-      const token = createUuid();
-
-      // Neon HTTP does not support transactions, so we revoke any open invite first
-      // and then create the replacement invite in a second query.
-      await db
-        .update(userInvitations)
-        .set({
-          revokedAt: now,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(userInvitations.email, email),
-            isNull(userInvitations.acceptedAt),
-            isNull(userInvitations.revokedAt),
-            gt(userInvitations.expiresAt, now),
-          ),
-        );
-
-      await db.insert(userInvitations).values({
-        email,
-        role,
-        token,
-        inviterUserId: session.user.id,
-        expiresAt,
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      await sendUserInvitationEmail({
-        email,
-        inviterName: inviter[0]?.name ?? "MT Legacy Admin",
-        invitationUrl: getInvitationLink(token),
-      });
-
-      res.status(201).json({
-        email,
-        role,
-        invitationUrl: getInvitationLink(token),
-        expiresAt,
-      });
-    } catch (error) {
-      handleRouteError(res, error, "Failed to send invitation");
-    }
-  });
-
-  app.get("/api/invitations/:token", async (req, res) => {
-    try {
-      const token = requireUuid(req.params.token, "Invitation token");
-      const invitation = await getInvitationByToken(token);
-
-      if (!invitation) {
-        res.status(404).json({ error: "Invitation not found" });
-        return;
-      }
-
-      assertInvitationIsOpen(invitation);
-
-      res.json({
-        email: invitation.email,
-        role: invitation.role,
-        expiresAt: invitation.expiresAt,
-      });
-    } catch (error) {
-      handleRouteError(res, error, "Failed to load invitation");
-    }
-  });
-
-  app.post("/api/invitations/:token/accept", async (req, res) => {
-    try {
-      const token = requireUuid(req.params.token, "Invitation token");
-      const payload = getRecord(req.body, "request body");
-      const name = getTrimmedString(payload.name, "name", { maxLength: 120 });
-      const password = getTrimmedString(payload.password, "password", { maxLength: 128 });
-
-      if (password.length < MIN_PASSWORD_LENGTH) {
-        throw new HttpError(400, `Password must be at least ${MIN_PASSWORD_LENGTH} characters long`);
-      }
-
-      const invitation = await getInvitationByToken(token);
-      if (!invitation) {
-        throw new HttpError(404, "Invitation not found");
-      }
-
-      assertInvitationIsOpen(invitation);
-
-      const existingUser = await db
-        .select({ id: authUsers.id })
-        .from(authUsers)
-        .where(eq(authUsers.email, invitation.email))
-        .limit(1);
-
-      if (existingUser[0]) {
-        throw new HttpError(409, "An account for this email already exists");
-      }
-
-      const invitationRole = getInviteRole(invitation.role, "invitation role");
-
-      const created = await auth.api.createUser({
-        body: {
-          email: invitation.email,
-          password,
-          name,
-          role: invitationRole,
-          data: {
-            emailVerified: true,
-          },
-        },
-      });
-
-      await db
-        .update(authUsers)
-        .set({
-          emailVerified: true,
-          updatedAt: new Date(),
-        })
-        .where(eq(authUsers.id, created.user.id));
-
-      await db
-        .update(userInvitations)
-        .set({
-          acceptedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(eq(userInvitations.id, invitation.id));
-
-      res.status(201).json({
-        email: invitation.email,
-        user: created.user,
-      });
-    } catch (error) {
-      handleRouteError(res, error, "Failed to accept invitation");
-    }
   });
 
   app.get("/api/verify-invoice/:token", async (req, res) => {
@@ -1801,6 +2060,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
     }
 
     try {
+      if (!isAdminSession(session)) {
+        throw new HttpError(403, "Only admin users can create companies");
+      }
+
       const payload = parseCompanyInput(req.body);
       const access = await getCompanyAccessContext(session.user.id);
       const [currentUser] = await db
@@ -1821,32 +2084,30 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
       const membershipId = createUuid();
       const now = new Date();
 
-      await db.batch([
-        db.insert(companies).values({
-          id: companyId,
-          ...payload,
-          documentLogoUrl: shouldSeedLegacyData ? currentUser.documentLogoUrl ?? null : null,
-          documentLogoKey: shouldSeedLegacyData ? currentUser.documentLogoKey ?? null : null,
-          createdByUserId: session.user.id,
-          createdAt: now,
+      await db.insert(companies).values({
+        id: companyId,
+        ...payload,
+        documentLogoUrl: shouldSeedLegacyData ? currentUser.documentLogoUrl ?? null : null,
+        documentLogoKey: shouldSeedLegacyData ? currentUser.documentLogoKey ?? null : null,
+        createdByUserId: session.user.id,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await db.insert(companyMemberships).values({
+        id: membershipId,
+        companyId,
+        userId: session.user.id,
+        role: "owner",
+        createdAt: now,
+        updatedAt: now,
+      });
+      await db
+        .update(authUsers)
+        .set({
+          activeCompanyId: companyId,
           updatedAt: now,
-        }),
-        db.insert(companyMemberships).values({
-          id: membershipId,
-          companyId,
-          userId: session.user.id,
-          role: "owner",
-          createdAt: now,
-          updatedAt: now,
-        }),
-        db
-          .update(authUsers)
-          .set({
-            activeCompanyId: companyId,
-            updatedAt: now,
-          })
-          .where(eq(authUsers.id, session.user.id)),
-      ]);
+        })
+        .where(eq(authUsers.id, session.user.id));
 
       if (shouldSeedLegacyData) {
         await db
@@ -2131,7 +2392,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
     }
 
     try {
-      const [allUsers, invoiceCounts, sessionStats] = await Promise.all([
+      const [allUsers, invoiceCounts] = await Promise.all([
         db
           .select({
             id: authUsers.id,
@@ -2139,6 +2400,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
             email: authUsers.email,
             emailVerified: authUsers.emailVerified,
             image: authUsers.image,
+            lastSeenAt: authUsers.lastSeenAt,
             createdAt: authUsers.createdAt,
             updatedAt: authUsers.updatedAt,
             role: authUsers.role,
@@ -2156,39 +2418,20 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
           .from(invoices)
           .where(isNotNull(invoices.userId))
           .groupBy(invoices.userId),
-        db
-          .select({
-            userId: authSessions.userId,
-            activeSessions: count(),
-            lastSeenAt: sql<Date | null>`max(${authSessions.updatedAt})`,
-          })
-          .from(authSessions)
-          .groupBy(authSessions.userId),
       ]);
 
       const invoiceCountMap = new Map(
         invoiceCounts.map((row) => [row.userId, Number(row.invoiceCount)]),
       );
-      const sessionStatMap = new Map(
-        sessionStats.map((row) => [
-          row.userId,
-          {
-            activeSessions: Number(row.activeSessions),
-            lastSeenAt: row.lastSeenAt,
-          },
-        ]),
-      );
 
       const users = allUsers
         .map((currentUser) => {
-          const sessionData = sessionStatMap.get(currentUser.id);
-
           return {
             ...currentUser,
             role: currentUser.role ?? "user",
             invoiceCount: invoiceCountMap.get(currentUser.id) ?? 0,
-            activeSessions: sessionData?.activeSessions ?? 0,
-            lastSeenAt: sessionData?.lastSeenAt ?? null,
+            activeSessions: currentUser.id === session.user.id ? 1 : 0,
+            lastSeenAt: currentUser.lastSeenAt ?? null,
             isCurrentUser: currentUser.id === session.user.id,
           };
         })
@@ -2207,6 +2450,54 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
       res.json(users);
     } catch (error) {
       handleRouteError(res, error, "Failed to fetch users");
+    }
+  });
+
+  app.delete("/api/users/:id", async (req, res) => {
+    const session = await getAuthenticatedSession(req, res);
+    if (!session) {
+      return;
+    }
+
+    if (!isAdminSession(session)) {
+      res.status(403).json({ error: "Only admins can delete users" });
+      return;
+    }
+
+    try {
+      const targetUserId = getTrimmedString(req.params.id, "User id", { maxLength: 120 });
+      if (targetUserId === session.user.id) {
+        throw new HttpError(409, "You cannot delete your own account");
+      }
+
+      const [targetUser] = await db
+        .select({
+          id: authUsers.id,
+          role: authUsers.role,
+        })
+        .from(authUsers)
+        .where(eq(authUsers.id, targetUserId))
+        .limit(1);
+
+      if (!targetUser) {
+        throw new HttpError(404, "User not found");
+      }
+
+      if ((targetUser.role ?? "user") === "admin") {
+        const [adminCountRecord] = await db
+          .select({ count: count() })
+          .from(authUsers)
+          .where(eq(authUsers.role, "admin"));
+
+        if (Number(adminCountRecord?.count ?? 0) <= 1) {
+          throw new HttpError(409, "You cannot delete the last administrator");
+        }
+      }
+
+      await deleteUserAccount(targetUserId);
+      res.status(204).end();
+    } catch (error) {
+      handleRouteError(res, error, "Failed to delete user");
     }
   });
 
@@ -2230,7 +2521,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
         siteLogoUrl: brandingProfile?.siteLogoUrl ?? null,
       });
     } catch (error) {
-      handleRouteError(res, error, "Failed to fetch branding");
+      console.error("Failed to fetch branding", error);
+      res.json({
+        siteLogoUrl: null,
+      });
     }
   });
 
@@ -2246,7 +2540,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
         ? await getCompanyDetailResponse(session.user.id, access.activeMembership.companyId)
         : null;
 
-      const [profile, sessionStats] = await Promise.all([
+      const [profile, authSessions] = await Promise.all([
         db
           .select({
             id: authUsers.id,
@@ -2256,20 +2550,14 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
             image: authUsers.image,
             emailVerified: authUsers.emailVerified,
             role: authUsers.role,
+            lastSeenAt: authUsers.lastSeenAt,
             createdAt: authUsers.createdAt,
             updatedAt: authUsers.updatedAt,
           })
           .from(authUsers)
           .where(eq(authUsers.id, session.user.id))
           .limit(1),
-        db
-          .select({
-            activeSessions: count(),
-            lastSeenAt: sql<Date | null>`max(${authSessions.updatedAt})`,
-          })
-          .from(authSessions)
-          .where(eq(authSessions.userId, session.user.id))
-          .limit(1),
+        listAuthSessions(session.user.id),
       ]);
 
       const currentProfile = profile[0];
@@ -2277,8 +2565,6 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
         res.status(404).json({ error: "User profile not found" });
         return;
       }
-
-      const sessionSummary = sessionStats[0] ?? { activeSessions: 0, lastSeenAt: null };
 
       res.json({
         profile: {
@@ -2295,8 +2581,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
           siteLogoUrl: currentProfile.siteLogoUrl ?? null,
         },
         security: {
-          activeSessions: Number(sessionSummary.activeSessions),
-          lastSeenAt: sessionSummary.lastSeenAt,
+          activeSessions: authSessions.length,
+          lastSeenAt: currentProfile.lastSeenAt ?? null,
         },
         permissions: {
           canManageSiteBranding: access.isGlobalAdmin,
@@ -2309,6 +2595,67 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
     }
   });
 
+  app.get("/api/settings/sessions", async (req, res) => {
+    const session = await getAuthenticatedSession(req, res);
+    if (!session) {
+      return;
+    }
+
+    try {
+      const authSessions = await listAuthSessions(session.user.id);
+      res.json({
+        currentSessionId: session.sessionId ?? null,
+        sessions: authSessions.map((authSession) => ({
+          id: authSession.id,
+          createdAt: authSession.createdAt,
+          updatedAt: authSession.updatedAt ?? authSession.createdAt,
+          userId: session.user.id,
+          expiresAt: authSession.expiresAt,
+          token: authSession.id,
+          ipAddress: authSession.ipAddress,
+          userAgent: authSession.userAgent,
+        })),
+      });
+    } catch (error) {
+      handleRouteError(res, error, "Failed to fetch active sessions");
+    }
+  });
+
+  app.delete("/api/settings/sessions/others", async (req, res) => {
+    const session = await getAuthenticatedSession(req, res);
+    if (!session) {
+      return;
+    }
+
+    try {
+      await deleteOtherAuthSessions(session.user.id, session.sessionId);
+      res.status(204).end();
+    } catch (error) {
+      handleRouteError(res, error, "Failed to revoke other sessions");
+    }
+  });
+
+  app.delete("/api/settings/sessions/:id", async (req, res) => {
+    const session = await getAuthenticatedSession(req, res);
+    if (!session) {
+      return;
+    }
+
+    try {
+      const sessionId = requireUuid(req.params.id, "Session id");
+      const deleted = await deleteAuthSession(session.user.id, sessionId);
+
+      if (!deleted) {
+        res.status(404).json({ error: "Session not found" });
+        return;
+      }
+
+      res.status(204).end();
+    } catch (error) {
+      handleRouteError(res, error, "Failed to revoke session");
+    }
+  });
+
   app.get("/api/dashboard", async (req, res) => {
     const session = await getAuthenticatedSession(req, res);
     if (!session) {
@@ -2317,7 +2664,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
 
     try {
       const access = await getRequiredActiveCompanyContext(session.user.id);
-      const companyId = access.activeMembership.companyId;
+      const { appliedRoleFilter, where: invoiceWhere } = await buildDashboardInvoiceWhere(
+        access,
+        req.query.roleFilter,
+      );
 
       const [invoiceSummaryRows, revenueRows, recentInvoiceRows] = await Promise.all([
         db
@@ -2326,7 +2676,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
             uniqueClients: sql<number>`count(distinct ${invoices.clientCompanyName})`,
           })
           .from(invoices)
-          .where(eq(invoices.companyId, companyId))
+          .where(invoiceWhere)
           .limit(1),
         db
           .select({
@@ -2334,7 +2684,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
           })
           .from(invoices)
           .leftJoin(services, eq(services.invoiceId, invoices.id))
-          .where(eq(invoices.companyId, companyId))
+          .where(invoiceWhere)
           .limit(1),
         db
           .select({
@@ -2342,33 +2692,40 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
             invoiceNo: invoices.invoiceNo,
             clientCompanyName: invoices.clientCompanyName,
             issueDate: invoices.issueDate,
-            totalAmount: getInvoiceRevenueSql(),
           })
           .from(invoices)
-          .leftJoin(services, eq(services.invoiceId, invoices.id))
-          .where(eq(invoices.companyId, companyId))
-          .groupBy(
-            invoices.id,
-            invoices.invoiceNo,
-            invoices.clientCompanyName,
-            invoices.issueDate,
-            invoices.updatedAt,
-            invoices.createdAt,
-          )
+          .where(invoiceWhere)
           .orderBy(desc(invoices.updatedAt), desc(invoices.createdAt))
           .limit(5),
       ]);
+
+      const recentInvoiceIds = recentInvoiceRows.map((invoice) => invoice.id);
+      const recentInvoiceTotals =
+        recentInvoiceIds.length > 0
+          ? await db
+              .select({
+                invoiceId: services.invoiceId,
+                totalAmount: getServiceRevenueSql(),
+              })
+              .from(services)
+              .where(inArray(services.invoiceId, recentInvoiceIds))
+              .groupBy(services.invoiceId)
+          : [];
+      const recentInvoiceTotalsById = new Map(
+        recentInvoiceTotals.map((invoice) => [invoice.invoiceId, Number(invoice.totalAmount ?? 0)]),
+      );
 
       const invoiceSummary = invoiceSummaryRows[0] ?? { totalInvoices: 0, uniqueClients: 0 };
       const revenueSummary = revenueRows[0] ?? { totalRevenue: 0 };
 
       res.json({
+        appliedRoleFilter,
         totalInvoices: Number(invoiceSummary.totalInvoices ?? 0),
         uniqueClients: Number(invoiceSummary.uniqueClients ?? 0),
         totalRevenue: Number(revenueSummary.totalRevenue ?? 0),
         recentInvoices: recentInvoiceRows.map((invoice) => ({
           ...invoice,
-          totalAmount: Number(invoice.totalAmount ?? 0),
+          totalAmount: recentInvoiceTotalsById.get(invoice.id) ?? 0,
         })),
       });
     } catch (error) {
@@ -2425,7 +2782,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
 
     try {
       const access = await getRequiredActiveCompanyContext(session.user.id);
-      const where = buildInvoiceListWhere(access.activeMembership.companyId);
+      const { appliedRoleFilter, where } = await buildDashboardInvoiceWhere(
+        access,
+        req.query.roleFilter,
+      );
       const allInvoices = await db.query.invoices.findMany({
         ...(where ? { where } : {}),
         columns: {
@@ -2438,7 +2798,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
         orderBy: [desc(invoices.updatedAt), desc(invoices.createdAt)],
       });
 
-      res.json(allInvoices);
+      res.json({
+        appliedRoleFilter,
+        invoices: allInvoices,
+      });
     } catch (error) {
       handleRouteError(res, error, "Failed to fetch invoices");
     }
@@ -2452,11 +2815,21 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
 
     try {
       const access = await getRequiredActiveCompanyContext(session.user.id);
+      const invoiceAccess = getInvoiceAccessScope(access);
       const invoiceIds = parseInvoiceIds(req.query.ids, "ids");
-      const orderedInvoices = await getSerializedInvoicesForExport(
-        access.activeMembership.companyId,
-        invoiceIds,
-      );
+      const matchingInvoices = await db.query.invoices.findMany({
+        where: and(buildInvoiceCompanyWhere(invoiceAccess), inArray(invoices.id, invoiceIds)),
+        columns: {
+          id: true,
+        },
+      });
+
+      if (matchingInvoices.length !== invoiceIds.length) {
+        res.status(404).json({ error: "One or more invoices could not be found" });
+        return;
+      }
+
+      const orderedInvoices = await getSerializedInvoicesForExport(invoiceAccess.companyId, invoiceIds);
       res.json(orderedInvoices);
     } catch (error) {
       handleRouteError(res, error, "Failed to fetch invoices for PDF export");
@@ -2484,12 +2857,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
 
     try {
       const access = await getRequiredActiveCompanyContext(session.user.id);
+      const invoiceAccess = getInvoiceAccessScope(access);
       const invoiceIds = parseInvoiceIds(req.query.ids, "ids");
       const matchingInvoices = await db.query.invoices.findMany({
-        where: and(
-          eq(invoices.companyId, access.activeMembership.companyId),
-          inArray(invoices.id, invoiceIds),
-        ),
+        where: and(buildInvoiceCompanyWhere(invoiceAccess), inArray(invoices.id, invoiceIds)),
         columns: {
           id: true,
           invoiceNo: true,
@@ -2527,9 +2898,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
 
     try {
       const access = await getRequiredActiveCompanyContext(session.user.id);
+      const invoiceAccess = getInvoiceAccessScope(access);
       const invoiceId = requireUuid(req.params.id, "Invoice id");
       const invoice = await db.query.invoices.findFirst({
-        where: buildInvoiceIdWhere(access.activeMembership.companyId, invoiceId),
+        where: buildInvoiceIdWhere({ ...invoiceAccess, invoiceId }),
         columns: {
           id: true,
           invoiceNo: true,
@@ -2567,9 +2939,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
 
     try {
       const access = await getRequiredActiveCompanyContext(session.user.id);
+      const invoiceAccess = getInvoiceAccessScope(access);
       const invoiceId = requireUuid(req.params.id, "Invoice id");
       const invoice = await db.query.invoices.findFirst({
-        where: buildInvoiceIdWhere(access.activeMembership.companyId, invoiceId),
+        where: buildInvoiceIdWhere({ ...invoiceAccess, invoiceId }),
         with: {
           company: {
             columns: {
@@ -2611,6 +2984,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
 
     try {
       const access = await getRequiredActiveCompanyContext(session.user.id);
+      const invoiceAccess = getInvoiceAccessScope(access);
       const parsedInvoice = parseInvoiceInput(req.body);
       const invoiceId = parsedInvoice.id ?? createUuid();
 
@@ -2620,7 +2994,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
 
       if (parsedInvoice.id) {
         const existingInvoice = await db.query.invoices.findFirst({
-          where: buildInvoiceIdWhere(access.activeMembership.companyId, invoiceId),
+          where: buildInvoiceIdWhere({ ...invoiceAccess, invoiceId }),
           columns: {
             userId: true,
             companyId: true,
@@ -2645,35 +3019,35 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
       }));
 
       if (parsedInvoice.id) {
-        await db.batch([
-          db
-            .update(invoices)
-            .set({
-              ...parsedInvoice.invoice,
-              userId: ownerId,
-              companyId,
-              verificationToken,
-              updatedAt: new Date(),
-            })
-            .where(buildInvoiceIdWhere(access.activeMembership.companyId, invoiceId)),
-          db.delete(services).where(eq(services.invoiceId, invoiceId)),
-          ...(serviceRows.length > 0 ? [db.insert(services).values(serviceRows)] : []),
-        ]);
-      } else {
-        await db.batch([
-          db.insert(invoices).values({
-            id: invoiceId,
+        await db
+          .update(invoices)
+          .set({
+            ...parsedInvoice.invoice,
             userId: ownerId,
             companyId,
             verificationToken,
-            ...parsedInvoice.invoice,
-          }),
-          ...(serviceRows.length > 0 ? [db.insert(services).values(serviceRows)] : []),
-        ]);
+            updatedAt: new Date(),
+          })
+          .where(buildInvoiceIdWhere({ ...invoiceAccess, invoiceId }));
+        await db.delete(services).where(eq(services.invoiceId, invoiceId));
+        if (serviceRows.length > 0) {
+          await db.insert(services).values(serviceRows);
+        }
+      } else {
+        await db.insert(invoices).values({
+          id: invoiceId,
+          userId: ownerId,
+          companyId,
+          verificationToken,
+          ...parsedInvoice.invoice,
+        });
+        if (serviceRows.length > 0) {
+          await db.insert(services).values(serviceRows);
+        }
       }
 
       const savedInvoice = await db.query.invoices.findFirst({
-        where: buildInvoiceIdWhere(access.activeMembership.companyId, invoiceId),
+        where: buildInvoiceIdWhere({ ...invoiceAccess, invoiceId }),
         with: {
           company: {
             columns: {
@@ -2712,10 +3086,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
 
     try {
       const access = await getRequiredActiveCompanyContext(session.user.id);
+      const invoiceAccess = getInvoiceAccessScope(access);
       const invoiceId = requireUuid(req.params.id, "Invoice id");
       const deletedInvoice = await db
         .delete(invoices)
-        .where(buildInvoiceIdWhere(access.activeMembership.companyId, invoiceId))
+        .where(buildInvoiceIdWhere({ ...invoiceAccess, invoiceId }))
         .returning({ id: invoices.id });
 
       if (deletedInvoice.length === 0) {

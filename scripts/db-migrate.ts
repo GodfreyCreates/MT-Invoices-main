@@ -31,7 +31,7 @@ async function getAppliedMigrationFilenames() {
   `));
 
   return new Set(
-    result.rows.map((row) => String((row as Record<string, unknown>).filename)),
+    Array.from(result as Iterable<Record<string, unknown>>).map((row) => String(row.filename)),
   );
 }
 

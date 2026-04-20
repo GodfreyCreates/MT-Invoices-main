@@ -1,5 +1,6 @@
 import type { InvoiceData } from '../store/useInvoiceStore';
 import { toClientApiUrl } from './client-env';
+import { getSupabaseAccessToken } from './supabase';
 
 type DownloadableInvoice = Pick<InvoiceData, 'invoiceNo'> & { id?: string };
 
@@ -65,7 +66,15 @@ function getRequiredInvoiceId(invoice: DownloadableInvoice) {
 }
 
 async function requestPdf(url: string, fallbackFilename: string, fallbackError: string) {
+  const headers = new Headers();
+  const accessToken = await getSupabaseAccessToken();
+
+  if (accessToken) {
+    headers.set('Authorization', `Bearer ${accessToken}`);
+  }
+
   const response = await fetch(toClientApiUrl(url), {
+    headers,
     credentials: 'include',
   });
 
