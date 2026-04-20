@@ -5,8 +5,20 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/api/invoices/pdf",
+      "destination": "/api?__pathname=invoices/pdf"
+    },
+    {
+      "source": "/api/invoices/:id/pdf",
+      "destination": "/api?__pathname=invoices/:id/pdf"
+    },
+    {
+      "source": "/api/invoices/export/render",
+      "destination": "/api?__pathname=invoices/export/render"
+    },
+    {
       "source": "/api/:path*",
-      "destination": "/api?__pathname=:path*"
+      "destination": "https://vvznmnxheqjvosnzkxkl.supabase.co/functions/v1/app-api?path=/api/:path*"
     },
     {
       "source": "/",
