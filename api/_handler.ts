@@ -1,14 +1,17 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createApp } from "../server";
+import { randomUUID } from "node:crypto";
 
-let appPromise: ReturnType<typeof createApp> | null = null;
+let appPromise: Promise<(req: IncomingMessage, res: ServerResponse) => unknown> | null = null;
 
 async function getApp() {
   if (!appPromise) {
-    appPromise = createApp().catch((error) => {
+    appPromise = (async () => {
+      const { createApp } = await import("../server");
+      return createApp();
+    })().catch((error) => {
       appPromise = null;
       throw error;
-    });
+    }) as Promise<(req: IncomingMessage, res: ServerResponse) => unknown>;
   }
 
   return appPromise;
@@ -33,7 +36,28 @@ function restoreApiPathFromRewrite(req: IncomingMessage) {
 }
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
-  restoreApiPathFromRewrite(req);
-  const app = await getApp();
-  return app(req as never, res as never);
+  const requestId =
+    typeof req.headers["x-request-id"] === "string" && req.headers["x-request-id"].trim()
+      ? req.headers["x-request-id"].trim()
+      : randomUUID();
+  res.setHeader("x-request-id", requestId);
+
+  try {
+    restoreApiPathFromRewrite(req);
+    const app = await getApp();
+    return app(req as never, res as never);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to initialize API server";
+    const isMissingEnv = message.includes("Missing required environment variable:");
+    const responsePayload = {
+      error: isMissingEnv ? message : "Failed to initialize API server",
+      requestId,
+    };
+
+    console.error(`[${requestId}] API initialization failed`, error);
+
+    res.statusCode = 500;
+    res.setHeader("content-type", "application/json; charset=utf-8");
+    res.end(JSON.stringify(responsePayload));
+  }
 }
