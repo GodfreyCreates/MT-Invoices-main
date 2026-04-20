@@ -1,26 +1,23 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
-import { createRequire } from "node:module";
 
 type AppHandler = (req: IncomingMessage, res: ServerResponse) => unknown;
-type ServerBundleModule = {
+type ServerModule = {
   createApp?: () => Promise<AppHandler>;
 };
-
-const require = createRequire(import.meta.url);
 
 let appPromise: Promise<AppHandler> | null = null;
 
 async function getApp() {
   if (!appPromise) {
     appPromise = Promise.resolve()
-      .then(() => {
-        const serverBundle = require("../dist/server.cjs") as ServerBundleModule;
-        if (typeof serverBundle.createApp !== "function") {
-          throw new Error("Server bundle is missing createApp");
+      .then(async () => {
+        const serverModule = (await import("../server.ts")) as ServerModule;
+        if (typeof serverModule.createApp !== "function") {
+          throw new Error("Server module is missing createApp");
         }
 
-        return serverBundle.createApp();
+        return serverModule.createApp();
       })
       .catch((error) => {
         appPromise = null;
