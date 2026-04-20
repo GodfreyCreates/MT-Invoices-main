@@ -8,7 +8,6 @@ import { fromNodeHeaders, toNodeHandler } from "better-auth/node";
 import type { Page } from "puppeteer";
 import { createRouteHandler as createUploadthingRouteHandler } from "uploadthing/express";
 import { db } from "./src/db";
-import { ensureDatabaseSchema } from "./src/db/bootstrap";
 import { session as authSessions, user as authUsers } from "./src/db/auth-schema";
 import { sendUserInvitationEmail } from "./src/email";
 import { auth } from "./src/lib/auth";
@@ -22,7 +21,7 @@ import type {
   CompanySummary,
 } from "./src/lib/company";
 import { DEFAULT_INVOICE_THEME, isInvoiceThemeId } from "./src/lib/invoice-themes";
-import { getAuthSecret, getBaseUrl } from "./src/lib/server-env";
+import { getAuthSecret, getPublicAppOrigin } from "./src/lib/server-env";
 import { companies, companyMemberships, invoices, services, userInvitations } from "./src/db/schema";
 import { uploadRouter, utapi } from "./src/uploadthing";
 
@@ -1103,11 +1102,11 @@ function getRequestOrigin(req: Request) {
   const forwardedProtocol = getHeaderValue(req.headers["x-forwarded-proto"])
     ?.split(",")[0]
     ?.trim();
-  const protocol = forwardedProtocol || req.protocol || new URL(getBaseUrl()).protocol.replace(":", "");
+  const protocol = forwardedProtocol || req.protocol || new URL(getPublicAppOrigin()).protocol.replace(":", "");
   const host = getHeaderValue(req.headers.host)?.trim();
 
   if (!host) {
-    return getBaseUrl();
+    return getPublicAppOrigin();
   }
 
   return `${protocol}://${host}`;
@@ -1260,7 +1259,7 @@ async function renderPdfFromRoute(req: Request, routePath: string) {
 }
 
 function getInvitationLink(token: string) {
-  return `${getBaseUrl()}/invite/${token}`;
+  return `${getPublicAppOrigin()}/invite/${token}`;
 }
 
 async function getInvitationByToken(token: string) {
@@ -1399,8 +1398,6 @@ async function removeCompanyDocumentLogo(companyId: string) {
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<Express> {
-  await ensureDatabaseSchema();
-
   const app = express();
 
   app.disable("x-powered-by");
@@ -1412,7 +1409,22 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
 
   app.all("/api/auth/*", (req, res) => {
     applyAuthRequestMetadata(req);
-    return authHandler(req, res);
+    void Promise.resolve(authHandler(req, res)).catch((error: unknown) => {
+      console.error("Failed to handle auth request", error);
+
+      if (res.headersSent) {
+        return;
+      }
+
+      const isAllowedHostError =
+        error instanceof Error &&
+        error.name === "BetterAuthError" &&
+        error.message.includes("allowed hosts list");
+
+      res.status(isAllowedHostError ? 400 : 500).json({
+        error: isAllowedHostError ? "Invalid auth host" : "Failed to handle auth request",
+      });
+    });
   });
 
   app.get("/api/health", (_req, res) => {

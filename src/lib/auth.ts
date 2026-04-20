@@ -5,13 +5,15 @@ import { db } from "../db";
 import { user } from "../db/auth-schema";
 import { count } from "drizzle-orm";
 import { sendAccountVerificationEmail } from "../email";
-import { getAuthSecret, getBaseUrl, getTrustedOrigins } from "./server-env";
+import { getAuthBaseUrlConfig, getAuthSecret, getTrustedOrigins, toPublicAppUrl } from "./server-env";
+
+const trustedOrigins = getTrustedOrigins();
 
 export const auth = betterAuth({
     database: drizzleAdapter(db, {
         provider: "pg", // or "sqlite"
     }),
-    baseURL: getBaseUrl(),
+    baseURL: getAuthBaseUrlConfig(),
     secret: getAuthSecret(),
     advanced: {
         ipAddress: {
@@ -32,12 +34,11 @@ export const auth = betterAuth({
             await sendAccountVerificationEmail({
                 email: user.email,
                 name: user.name,
-                verificationUrl: url,
+                verificationUrl: toPublicAppUrl(url),
             });
         },
     },
-    trustedOrigins: getTrustedOrigins(),
-    trustHost: true,
+    trustedOrigins: trustedOrigins.length > 0 ? trustedOrigins : undefined,
     plugins: [
         admin()
     ],

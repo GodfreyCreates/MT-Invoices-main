@@ -5,7 +5,10 @@ let appPromise: ReturnType<typeof createApp> | null = null;
 
 async function getApp() {
   if (!appPromise) {
-    appPromise = createApp();
+    appPromise = createApp().catch((error) => {
+      appPromise = null;
+      throw error;
+    });
   }
 
   return appPromise;
