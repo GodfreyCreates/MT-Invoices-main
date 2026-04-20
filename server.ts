@@ -23,7 +23,7 @@ import type {
 import { DEFAULT_INVOICE_THEME, isInvoiceThemeId } from "./src/lib/invoice-themes";
 import { getAuthSecret, getPublicAppOrigin } from "./src/lib/server-env";
 import { companies, companyMemberships, invoices, services, userInvitations } from "./src/db/schema";
-import { uploadRouter, utapi } from "./src/uploadthing";
+import { deleteUploadThingFiles, uploadRouter } from "./src/uploadthing";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -1377,7 +1377,7 @@ async function removeUserLogo(userId: string, logoKind: "site" | "document") {
 
   if (logoKeyToDelete) {
     try {
-      await utapi.deleteFiles(logoKeyToDelete);
+      await deleteUploadThingFiles(logoKeyToDelete);
     } catch (error) {
       console.error("Failed to delete logo from UploadThing", error);
     }
@@ -1404,7 +1404,7 @@ async function removeCompanyDocumentLogo(companyId: string) {
 
   if (currentCompany?.documentLogoKey) {
     try {
-      await utapi.deleteFiles(currentCompany.documentLogoKey);
+      await deleteUploadThingFiles(currentCompany.documentLogoKey);
     } catch (error) {
       console.error("Failed to delete company logo from UploadThing", error);
     }

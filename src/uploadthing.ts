@@ -10,7 +10,36 @@ import { auth } from "./lib/auth";
 
 const f = createUploadthing();
 
-export const utapi = new UTApi();
+let utapiClient: UTApi | null = null;
+let hasUploadThingInitFailed = false;
+
+function getUtapiClient() {
+  if (hasUploadThingInitFailed) {
+    return null;
+  }
+
+  if (!utapiClient) {
+    try {
+      utapiClient = new UTApi();
+    } catch (error) {
+      hasUploadThingInitFailed = true;
+      console.error("Failed to initialize UploadThing client", error);
+      return null;
+    }
+  }
+
+  return utapiClient;
+}
+
+export async function deleteUploadThingFiles(fileKey: string) {
+  const client = getUtapiClient();
+  if (!client) {
+    return false;
+  }
+
+  await client.deleteFiles(fileKey);
+  return true;
+}
 
 async function getSessionUser(req: { headers: unknown }) {
   const session = await auth.api.getSession({
@@ -134,7 +163,7 @@ export const uploadRouter = {
 
       if (metadata.previousLogoKey && metadata.previousLogoKey !== file.key) {
         try {
-          await utapi.deleteFiles(metadata.previousLogoKey);
+          await deleteUploadThingFiles(metadata.previousLogoKey);
         } catch (error) {
           console.error("Failed to remove previous logo from UploadThing", error);
         }
@@ -171,7 +200,7 @@ export const uploadRouter = {
 
       if (metadata.previousLogoKey && metadata.previousLogoKey !== file.key) {
         try {
-          await utapi.deleteFiles(metadata.previousLogoKey);
+          await deleteUploadThingFiles(metadata.previousLogoKey);
         } catch (error) {
           console.error("Failed to remove previous logo from UploadThing", error);
         }
