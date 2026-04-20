@@ -1,4 +1,4 @@
-import express, { type Express, type Request, type Response } from "express";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import { isIP } from "node:net";
@@ -103,6 +103,20 @@ type SanitizedCompanyInput = {
   accountNumber: string;
   accountType: string;
   branchCode: string;
+};
+type HealthDiagnostic = {
+  status: "ok" | "degraded";
+  timestamp: string;
+  checks: {
+    requiredEnv: {
+      ok: boolean;
+      missing: string[];
+    };
+  };
+};
+type ApiErrorResponse = {
+  error: string;
+  requestId?: string;
 };
 type CompanyAccessMembership = {
   id: string;
@@ -1397,11 +1411,53 @@ async function removeCompanyDocumentLogo(companyId: string) {
   }
 }
 
+function getMissingRequiredEnvVars() {
+  const requiredEnvVarNames = ["DATABASE_URL", "BETTER_AUTH_SECRET"];
+
+  return requiredEnvVarNames.filter((name) => {
+    const value = process.env[name];
+    return !value || !value.trim();
+  });
+}
+
+function getRequestId(req: Request) {
+  const requestIdHeader = req.headers["x-request-id"];
+  if (typeof requestIdHeader === "string" && requestIdHeader.trim()) {
+    return requestIdHeader.trim();
+  }
+
+  if (Array.isArray(requestIdHeader) && requestIdHeader[0]?.trim()) {
+    return requestIdHeader[0].trim();
+  }
+
+  return randomUUID();
+}
+
+function getApiErrorResponse(errorMessage: string, requestId?: string): ApiErrorResponse {
+  return requestId ? { error: errorMessage, requestId } : { error: errorMessage };
+}
+
 export async function createApp(options: CreateAppOptions = {}): Promise<Express> {
   const app = express();
 
   app.disable("x-powered-by");
+  app.use((req, res, next) => {
+    const requestId = getRequestId(req);
+    req.headers["x-request-id"] = requestId;
+    res.setHeader("x-request-id", requestId);
+    next();
+  });
   app.use(express.json({ limit: "1mb" }));
+  app.use((error: unknown, req: Request, res: Response, next: NextFunction) => {
+    if (!(error instanceof SyntaxError) || !("status" in error)) {
+      next(error);
+      return;
+    }
+
+    const requestId = getRequestId(req);
+    console.error(`[${requestId}] Invalid JSON payload`, error);
+    res.status(400).json(getApiErrorResponse("Invalid JSON payload", requestId));
+  });
 
   app.use("/api/uploadthing", createUploadthingRouteHandler({ router: uploadRouter }));
 
@@ -1410,7 +1466,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
   app.all("/api/auth/*", (req, res) => {
     applyAuthRequestMetadata(req);
     void Promise.resolve(authHandler(req, res)).catch((error: unknown) => {
-      console.error("Failed to handle auth request", error);
+      const requestId = getRequestId(req);
+      console.error(`[${requestId}] Failed to handle auth request`, error);
 
       if (res.headersSent) {
         return;
@@ -1421,14 +1478,31 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
         error.name === "BetterAuthError" &&
         error.message.includes("allowed hosts list");
 
-      res.status(isAllowedHostError ? 400 : 500).json({
-        error: isAllowedHostError ? "Invalid auth host" : "Failed to handle auth request",
-      });
+      res
+        .status(isAllowedHostError ? 400 : 500)
+        .json(
+          getApiErrorResponse(
+            isAllowedHostError ? "Invalid auth host" : "Failed to handle auth request",
+            requestId,
+          ),
+        );
     });
   });
 
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok" });
+    const missingRequiredEnvVars = getMissingRequiredEnvVars();
+    const health: HealthDiagnostic = {
+      status: missingRequiredEnvVars.length === 0 ? "ok" : "degraded",
+      timestamp: new Date().toISOString(),
+      checks: {
+        requiredEnv: {
+          ok: missingRequiredEnvVars.length === 0,
+          missing: missingRequiredEnvVars,
+        },
+      },
+    };
+
+    res.status(health.status === "ok" ? 200 : 503).json(health);
   });
 
   app.post("/api/invitations", async (req, res) => {
@@ -2610,6 +2684,21 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
     }
 
     next();
+  });
+
+  app.use("/api", (_req, res) => {
+    const requestIdHeader = res.getHeader("x-request-id");
+    const requestId = typeof requestIdHeader === "string" ? requestIdHeader : undefined;
+    res.status(404).json(getApiErrorResponse("API route not found", requestId));
+  });
+
+  app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
+    const requestId = getRequestId(req);
+    console.error(`[${requestId}] Unhandled route error`, error);
+    if (res.headersSent) {
+      return;
+    }
+    res.status(500).json(getApiErrorResponse("Internal server error", requestId));
   });
 
   if (options.serveClientApp) {
