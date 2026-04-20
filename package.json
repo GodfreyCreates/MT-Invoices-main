@@ -7,7 +7,7 @@
     "dev": "tsx watch server.ts",
     "db:migrate": "tsx scripts/db-migrate.ts",
     "start": "node dist/server.cjs",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --target=node18 --outfile=dist/server.cjs --external:express --external:drizzle-orm --external:postgres --external:puppeteer",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --target=node18 --outfile=dist/server.cjs --external:express --external:drizzle-orm --external:postgres --external:puppeteer --external:vite",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"

@@ -7,23 +7,54 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { Dashboard } from './pages/Dashboard';
-import { InvoiceGenerator } from './pages/InvoiceGenerator';
-import { VerifyInvoice } from './pages/VerifyInvoice';
 import { Invoices } from './pages/Invoices';
-import { InvoicePreviewPage } from './pages/InvoicePreviewPage';
 import { AuthPage } from './pages/AuthPage';
-import { AcceptInvitationPage } from './pages/AcceptInvitationPage';
-import { UsersPage } from './pages/UsersPage';
-import { CompaniesPage } from './pages/CompaniesPage';
-import { CompanySetupPage } from './pages/CompanySetupPage';
-import { InvoicePrintPage } from './pages/InvoicePrintPage';
 import { SettingsPage } from './pages/SettingsPage';
-import { ClientsPage } from './pages/ClientsPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { ConfirmationProvider } from './components/ui/ConfirmationProvider';
 import { MobileNav } from './components/layout/MobileNav';
 import { BrandingProvider } from './lib/branding';
 import { WorkspaceProvider } from './lib/workspace';
+
+const AcceptInvitationPage = React.lazy(() =>
+  import('./pages/AcceptInvitationPage').then((module) => ({ default: module.AcceptInvitationPage })),
+);
+const ClientsPage = React.lazy(() =>
+  import('./pages/ClientsPage').then((module) => ({ default: module.ClientsPage })),
+);
+const CompaniesPage = React.lazy(() =>
+  import('./pages/CompaniesPage').then((module) => ({ default: module.CompaniesPage })),
+);
+const CompanySetupPage = React.lazy(() =>
+  import('./pages/CompanySetupPage').then((module) => ({ default: module.CompanySetupPage })),
+);
+const InvoiceGenerator = React.lazy(() =>
+  import('./pages/InvoiceGenerator').then((module) => ({ default: module.InvoiceGenerator })),
+);
+const InvoicePreviewPage = React.lazy(() =>
+  import('./pages/InvoicePreviewPage').then((module) => ({ default: module.InvoicePreviewPage })),
+);
+const InvoicePrintPage = React.lazy(() =>
+  import('./pages/InvoicePrintPage').then((module) => ({ default: module.InvoicePrintPage })),
+);
+const UsersPage = React.lazy(() =>
+  import('./pages/UsersPage').then((module) => ({ default: module.UsersPage })),
+);
+const VerifyInvoice = React.lazy(() =>
+  import('./pages/VerifyInvoice').then((module) => ({ default: module.VerifyInvoice })),
+);
+
+function RouteFallback() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="text-sm font-medium text-muted-foreground">Loading...</div>
+    </div>
+  );
+}
+
+function LazyRoute({ children }: { children: React.ReactNode }) {
+  return <React.Suspense fallback={<RouteFallback />}>{children}</React.Suspense>;
+}
 
 function AppRoutes() {
   const location = useLocation();
@@ -34,17 +65,17 @@ function AppRoutes() {
       <Routes>
         <Route path="/" element={<Navigate to="/auth" replace />} />
         <Route path="/auth" element={<AuthPage />} />
-        <Route path="/invite/:token" element={<AcceptInvitationPage />} />
-        <Route path="/verify" element={<VerifyInvoice />} />
-        <Route path="/print/invoice/:id" element={<InvoicePrintPage />} />
-        <Route path="/print/invoices" element={<InvoicePrintPage />} />
+        <Route path="/invite/:token" element={<LazyRoute><AcceptInvitationPage /></LazyRoute>} />
+        <Route path="/verify" element={<LazyRoute><VerifyInvoice /></LazyRoute>} />
+        <Route path="/print/invoice/:id" element={<LazyRoute><InvoicePrintPage /></LazyRoute>} />
+        <Route path="/print/invoices" element={<LazyRoute><InvoicePrintPage /></LazyRoute>} />
 
         {/* Protected Routes */}
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-        <Route path="/clients" element={<ProtectedRoute><ClientsPage /></ProtectedRoute>} />
-        <Route path="/users" element={<ProtectedRoute requireCompany={false}><UsersPage /></ProtectedRoute>} />
-        <Route path="/companies" element={<ProtectedRoute requireCompany={false}><CompaniesPage /></ProtectedRoute>} />
-        <Route path="/company/setup" element={<ProtectedRoute requireCompany={false}><CompanySetupPage /></ProtectedRoute>} />
+        <Route path="/clients" element={<ProtectedRoute><LazyRoute><ClientsPage /></LazyRoute></ProtectedRoute>} />
+        <Route path="/users" element={<ProtectedRoute requireCompany={false}><LazyRoute><UsersPage /></LazyRoute></ProtectedRoute>} />
+        <Route path="/companies" element={<ProtectedRoute requireCompany={false}><LazyRoute><CompaniesPage /></LazyRoute></ProtectedRoute>} />
+        <Route path="/company/setup" element={<ProtectedRoute requireCompany={false}><LazyRoute><CompanySetupPage /></LazyRoute></ProtectedRoute>} />
         <Route
           path="/settings"
           element={
@@ -53,9 +84,9 @@ function AppRoutes() {
             </ProtectedRoute>
           }
         />
-        <Route path="/invoices/new" element={<ProtectedRoute><InvoiceGenerator /></ProtectedRoute>} />
+        <Route path="/invoices/new" element={<ProtectedRoute><LazyRoute><InvoiceGenerator /></LazyRoute></ProtectedRoute>} />
         <Route path="/invoices" element={<ProtectedRoute><Invoices /></ProtectedRoute>} />
-        <Route path="/invoice/:id/preview" element={<ProtectedRoute><InvoicePreviewPage /></ProtectedRoute>} />
+        <Route path="/invoice/:id/preview" element={<ProtectedRoute><LazyRoute><InvoicePreviewPage /></LazyRoute></ProtectedRoute>} />
 
         <Route path="*" element={<Navigate to="/auth" replace />} />
       </Routes>
