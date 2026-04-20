@@ -76,6 +76,27 @@ export async function ensureAppStorageBucket() {
   return ensureBucketPromise;
 }
 
+export async function getAppStorageBucketHealth() {
+  const supabaseAdmin = createSupabaseAdminClient();
+  const { data: bucket, error } = await supabaseAdmin.storage.getBucket(APP_STORAGE_BUCKET);
+
+  if (error) {
+    return {
+      ok: false,
+      exists: false,
+      errorMessage: error.message,
+      bucket: null,
+    };
+  }
+
+  return {
+    ok: Boolean(bucket),
+    exists: Boolean(bucket),
+    errorMessage: null,
+    bucket,
+  };
+}
+
 export async function uploadImageToStorage(params: {
   objectPath: string;
   contentType: string;

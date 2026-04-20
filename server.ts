@@ -22,7 +22,7 @@ import { createSupabaseAdminClient, createSupabaseServerClient } from "./src/lib
 import { getAppSecret, getPublicAppOrigin } from "./src/lib/server-env";
 import {
   deleteImageFromStorage,
-  ensureAppStorageBucket,
+  getAppStorageBucketHealth,
 } from "./src/lib/storage-server";
 import { companies, companyMemberships, invoices, savedClients, services, userInvitations } from "./src/db/schema";
 
@@ -34,6 +34,7 @@ const INVITATION_EXPIRY_DAYS = 7;
 const CANONICAL_CLIENT_IP_HEADER = "x-client-ip";
 const INVOICE_EXPORT_TOKEN_TTL_MS = 5 * 60_000;
 const INVOICE_EXPORT_TOKEN_VERSION = 1;
+const HEALTH_CHECK_TIMEOUT_MS = 4_000;
 const STRONG_PROXY_IP_HEADERS = [
   "cf-connecting-ip",
   "fly-client-ip",
@@ -133,17 +134,46 @@ type SanitizedCompanyInput = {
   accountType: string;
   branchCode: string;
 };
+type HealthCheckStatus = "pass" | "fail";
 type HealthDiagnostic = {
   status: "ok" | "degraded";
   timestamp: string;
+  summary: string;
+  service: {
+    name: string;
+    environment: string;
+    runtime: string;
+    region: string | null;
+    deploymentUrl: string | null;
+    uptimeSeconds: number;
+    requestId: string;
+  };
   checks: {
-    requiredEnv: {
+    configuration: {
+      status: HealthCheckStatus;
       ok: boolean;
       missing: string[];
+      checked: string[];
+    };
+    application: {
+      status: HealthCheckStatus;
+      ok: boolean;
+      publicOrigin: string | null;
+      message?: string;
+    };
+    database: {
+      status: HealthCheckStatus;
+      ok: boolean;
+      latencyMs: number | null;
+      message?: string;
     };
     storage: {
+      status: HealthCheckStatus;
       ok: boolean;
-      configured: boolean;
+      bucket: string;
+      exists: boolean;
+      public: boolean | null;
+      fileSizeLimit: number | null;
       message?: string;
     };
   };
@@ -151,10 +181,6 @@ type HealthDiagnostic = {
 type ApiErrorResponse = {
   error: string;
   requestId?: string;
-};
-type StorageRouteState = {
-  enabled: boolean;
-  errorMessage?: string;
 };
 type CompanyAccessMembership = {
   id: string;
@@ -1986,7 +2012,7 @@ function getMissingRequiredEnvVars() {
     "VITE_SUPABASE_URL",
     "VITE_SUPABASE_PUBLISHABLE_KEY",
     "SUPABASE_SERVICE_ROLE_KEY",
-  ];
+  ] as const;
 
   return requiredEnvVarNames.filter((name) => {
     const value = process.env[name];
@@ -1994,8 +2020,8 @@ function getMissingRequiredEnvVars() {
   });
 }
 
-function getHealthStatus(requiredEnvOk: boolean, storageOk: boolean): HealthDiagnostic["status"] {
-  if (requiredEnvOk && storageOk) {
+function getHealthStatus(checks: HealthCheckStatus[]): HealthDiagnostic["status"] {
+  if (checks.every((status) => status === "pass")) {
     return "ok";
   }
 
@@ -2019,17 +2045,84 @@ function getApiErrorResponse(errorMessage: string, requestId?: string): ApiError
   return requestId ? { error: errorMessage, requestId } : { error: errorMessage };
 }
 
-async function getStorageRouteState(): Promise<StorageRouteState> {
+async function withHealthTimeout<T>(
+  work: Promise<T>,
+  timeoutMessage: string,
+): Promise<T> {
+  return await Promise.race([
+    work,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(timeoutMessage));
+      }, HEALTH_CHECK_TIMEOUT_MS);
+    }),
+  ]);
+}
+
+async function getDatabaseHealthState() {
+  const startedAt = Date.now();
+
   try {
-    await ensureAppStorageBucket();
-    return { enabled: true };
-  } catch (error) {
-    console.error("Failed to resolve Supabase Storage route state", error);
+    await withHealthTimeout(db.execute(sql`select 1`), "Database check timed out");
     return {
-      enabled: false,
-      errorMessage: "Supabase Storage initialization failed",
+      ok: true,
+      latencyMs: Date.now() - startedAt,
+      message: undefined,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      latencyMs: Date.now() - startedAt,
+      message: error instanceof Error ? error.message : "Database check failed",
     };
   }
+}
+
+async function getStorageHealthState() {
+  try {
+    const bucketState = await withHealthTimeout(
+      getAppStorageBucketHealth(),
+      "Storage check timed out",
+    );
+    return {
+      ok: bucketState.ok,
+      exists: bucketState.exists,
+      bucket: bucketState.bucket,
+      errorMessage: bucketState.errorMessage ?? undefined,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      exists: false,
+      bucket: null,
+      errorMessage: error instanceof Error ? error.message : "Storage check failed",
+    };
+  }
+}
+
+function getPublicOriginHealthState() {
+  try {
+    return {
+      ok: true,
+      publicOrigin: getPublicAppOrigin(),
+      message: undefined,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      publicOrigin: null,
+      message: error instanceof Error ? error.message : "Public origin check failed",
+    };
+  }
+}
+
+function getDeploymentUrl() {
+  const vercelUrl = process.env.VERCEL_URL?.trim();
+  return vercelUrl ? `https://${vercelUrl}` : null;
+}
+
+function getEnvironmentName() {
+  return process.env.VERCEL_ENV?.trim() || process.env.NODE_ENV?.trim() || "development";
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<Express> {
@@ -2054,22 +2147,71 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
     res.status(400).json(getApiErrorResponse("Invalid JSON payload", requestId));
   });
 
-  app.get("/api/health", async (_req, res) => {
+  app.get("/api/health", async (req, res) => {
     const missingRequiredEnvVars = getMissingRequiredEnvVars();
-    const storageState = await getStorageRouteState();
+    const [databaseState, storageState] = await Promise.all([
+      getDatabaseHealthState(),
+      getStorageHealthState(),
+    ]);
+    const publicOriginState = getPublicOriginHealthState();
     const requiredEnvOk = missingRequiredEnvVars.length === 0;
-    const storageOk = storageState.enabled;
+    const configurationStatus: HealthCheckStatus = requiredEnvOk ? "pass" : "fail";
+    const applicationStatus: HealthCheckStatus = publicOriginState.ok ? "pass" : "fail";
+    const databaseStatus: HealthCheckStatus = databaseState.ok ? "pass" : "fail";
+    const storageStatus: HealthCheckStatus = storageState.ok ? "pass" : "fail";
     const health: HealthDiagnostic = {
-      status: getHealthStatus(requiredEnvOk, storageOk),
+      status: getHealthStatus([
+        configurationStatus,
+        applicationStatus,
+        databaseStatus,
+        storageStatus,
+      ]),
       timestamp: new Date().toISOString(),
+      summary:
+        requiredEnvOk && publicOriginState.ok && databaseState.ok && storageState.ok
+          ? "All core platform checks passed."
+          : "One or more platform checks failed. Inspect the individual checks for details.",
+      service: {
+        name: "mt-invoices",
+        environment: getEnvironmentName(),
+        runtime: "node",
+        region: process.env.VERCEL_REGION?.trim() || process.env.AWS_REGION?.trim() || null,
+        deploymentUrl: getDeploymentUrl(),
+        uptimeSeconds: Math.round(process.uptime()),
+        requestId: getRequestId(req),
+      },
       checks: {
-        requiredEnv: {
+        configuration: {
+          status: configurationStatus,
           ok: requiredEnvOk,
+          checked: [
+            "SUPABASE_DB_URL",
+            "APP_SECRET",
+            "VITE_SUPABASE_URL",
+            "VITE_SUPABASE_PUBLISHABLE_KEY",
+            "SUPABASE_SERVICE_ROLE_KEY",
+          ],
           missing: missingRequiredEnvVars,
         },
+        application: {
+          status: applicationStatus,
+          ok: publicOriginState.ok,
+          publicOrigin: publicOriginState.publicOrigin,
+          ...(publicOriginState.message ? { message: publicOriginState.message } : {}),
+        },
+        database: {
+          status: databaseStatus,
+          ok: databaseState.ok,
+          latencyMs: databaseState.latencyMs,
+          ...(databaseState.message ? { message: databaseState.message } : {}),
+        },
         storage: {
-          ok: storageOk,
-          configured: storageState.enabled,
+          status: storageStatus,
+          ok: storageState.ok,
+          bucket: "app-images",
+          exists: storageState.exists,
+          public: storageState.bucket?.public ?? null,
+          fileSizeLimit: storageState.bucket?.file_size_limit ?? null,
           ...(storageState.errorMessage ? { message: storageState.errorMessage } : {}),
         },
       },

@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { sql } from 'drizzle-orm';
-import { db } from '../src/db';
+import { db, queryClient } from '../src/db';
 
 const MIGRATIONS_DIR = path.resolve(process.cwd(), 'drizzle');
 const MIGRATIONS_TABLE = '__app_migrations';
@@ -68,21 +68,25 @@ async function applyMigration(filename: string) {
 }
 
 async function main() {
-  await ensureMigrationsTable();
+  try {
+    await ensureMigrationsTable();
 
-  const migrationFilenames = await getMigrationFilenames();
-  const appliedMigrationFilenames = await getAppliedMigrationFilenames();
+    const migrationFilenames = await getMigrationFilenames();
+    const appliedMigrationFilenames = await getAppliedMigrationFilenames();
 
-  for (const filename of migrationFilenames) {
-    if (appliedMigrationFilenames.has(filename)) {
-      console.log(`Already applied ${filename}`);
-      continue;
+    for (const filename of migrationFilenames) {
+      if (appliedMigrationFilenames.has(filename)) {
+        console.log(`Already applied ${filename}`);
+        continue;
+      }
+
+      await applyMigration(filename);
     }
 
-    await applyMigration(filename);
+    console.log('Database migrations are up to date.');
+  } finally {
+    await queryClient.end({ timeout: 5 });
   }
-
-  console.log('Database migrations are up to date.');
 }
 
 main().catch((error) => {
