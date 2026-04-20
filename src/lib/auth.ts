@@ -37,7 +37,7 @@ export const auth = betterAuth({
         },
     },
     trustedOrigins: getTrustedOrigins(),
-    trustHost: false,
+    trustHost: true,
     plugins: [
         admin()
     ],
