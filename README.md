@@ -20,7 +20,7 @@ TRUSTED_ORIGINS=http://localhost:3000
 
 `TRUSTED_ORIGINS` is optional and accepts a comma-separated list of additional absolute origins for true cross-origin auth callers.
 
-`SITE_URL` is still accepted as a deprecated fallback for one transition window, but new deployments should use `APP_URL`.
+`APP_URL` is still accepted as a deprecated fallback for one transition window, but new deployments should use `APP_URL`.
 
 ## Run Locally
 

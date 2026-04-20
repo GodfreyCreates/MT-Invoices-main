@@ -62,15 +62,15 @@ function getVercelRequestHosts() {
 }
 
 function getDeprecatedSiteUrlOrigin() {
-  const siteUrl = getEnvValue('SITE_URL');
+  const siteUrl = getEnvValue('APP_URL');
   if (!siteUrl) {
     return null;
   }
 
-  const origin = normalizeOrigin(siteUrl, 'SITE_URL');
+  const origin = normalizeOrigin(siteUrl, 'APP_URL');
   if (!hasWarnedAboutSiteUrl) {
     hasWarnedAboutSiteUrl = true;
-    console.warn('SITE_URL is deprecated. Set APP_URL instead.');
+    console.warn('APP_URL is deprecated. Set APP_URL instead.');
   }
 
   return origin;
