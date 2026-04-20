@@ -7,7 +7,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import type { CompaniesResponse } from './company';
+import { normalizeCompaniesResponse, type CompaniesResponse } from './company';
 import { apiRequest } from './api';
 import { authClient } from './auth-client';
 
@@ -60,7 +60,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      setWorkspace(data);
+      setWorkspace(normalizeCompaniesResponse(data, sessionUserRole === 'admin'));
       setResolvedSessionKey(sessionKey);
     } catch (requestError) {
       if (!isMountedRef.current) {
@@ -100,10 +100,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    setWorkspace(nextWorkspace);
+    setWorkspace(normalizeCompaniesResponse(nextWorkspace, sessionUserRole === 'admin'));
     setError(null);
     setResolvedSessionKey(sessionKey);
-  }, [sessionKey]);
+  }, [sessionKey, sessionUserRole]);
 
   useEffect(() => {
     if (!isMountedRef.current) {
