@@ -1045,11 +1045,9 @@ async function removeCompanyDocumentLogo(companyId: string) {
 
 async function listAuthSessions(userId: string): Promise<SessionListItem[]> {
   const admin = getAdminClient();
-  const { data, error } = await admin
-    .schema('auth')
-    .from('sessions')
-    .select('id, created_at, updated_at, refreshed_at, not_after, user_agent, ip')
-    .eq('user_id', userId);
+  const { data, error } = await admin.rpc('app_list_auth_sessions', {
+    target_user_id: userId,
+  });
 
   if (error) {
     throw new HttpError(500, error.message);
@@ -1081,19 +1079,16 @@ async function listAuthSessions(userId: string): Promise<SessionListItem[]> {
 
 async function deleteAuthSession(userId: string, sessionId: string) {
   const admin = getAdminClient();
-  const { data, error } = await admin
-    .schema('auth')
-    .from('sessions')
-    .delete()
-    .eq('id', sessionId)
-    .eq('user_id', userId)
-    .select('id');
+  const { data, error } = await admin.rpc('app_delete_auth_session', {
+    target_user_id: userId,
+    target_session_id: sessionId,
+  });
 
   if (error) {
     throw new HttpError(500, error.message);
   }
 
-  return (data?.length ?? 0) > 0;
+  return Boolean(data);
 }
 
 async function deleteOtherAuthSessions(userId: string, currentSessionId: string | null) {
@@ -1102,12 +1097,10 @@ async function deleteOtherAuthSessions(userId: string, currentSessionId: string 
   }
 
   const admin = getAdminClient();
-  const { error } = await admin
-    .schema('auth')
-    .from('sessions')
-    .delete()
-    .eq('user_id', userId)
-    .neq('id', currentSessionId);
+  const { error } = await admin.rpc('app_delete_other_auth_sessions', {
+    target_user_id: userId,
+    current_session_id: currentSessionId,
+  });
 
   if (error) {
     throw new HttpError(500, error.message);
@@ -1116,11 +1109,9 @@ async function deleteOtherAuthSessions(userId: string, currentSessionId: string 
 
 async function deleteAllAuthSessions(userId: string) {
   const admin = getAdminClient();
-  const { error } = await admin
-    .schema('auth')
-    .from('sessions')
-    .delete()
-    .eq('user_id', userId);
+  const { error } = await admin.rpc('app_delete_all_auth_sessions', {
+    target_user_id: userId,
+  });
 
   if (error) {
     throw new HttpError(500, error.message);
@@ -1926,7 +1917,7 @@ async function handleListUsers(session: SessionRecord) {
         .select('id, name, email, email_verified, image, last_seen_at, created_at, updated_at, role, banned, ban_reason, ban_expires')
         .order('created_at', { ascending: false }),
       admin.from('invoices').select('user_id').not('user_id', 'is', null),
-      admin.schema('auth').from('sessions').select('user_id'),
+      admin.rpc('app_list_auth_session_counts'),
     ]);
 
   if (usersError) throw new HttpError(500, usersError.message);
@@ -1944,7 +1935,12 @@ async function handleListUsers(session: SessionRecord) {
   for (const authSessionRow of authSessionRows ?? []) {
     const userId = authSessionRow.user_id ? String(authSessionRow.user_id) : null;
     if (!userId) continue;
-    sessionCountMap.set(userId, (sessionCountMap.get(userId) ?? 0) + 1);
+    sessionCountMap.set(
+      userId,
+      typeof authSessionRow.active_sessions === 'number'
+        ? authSessionRow.active_sessions
+        : Number(authSessionRow.active_sessions ?? 0),
+    );
   }
 
   const users = (allUsers ?? [])
