@@ -15,6 +15,7 @@ TRUSTED_ORIGINS=http://localhost:3000
 ```
 
 `APP_URL` is the canonical public origin used for invitations and email verification links.
+On Vercel, if `APP_URL` is not set, the app falls back to `VERCEL_PROJECT_PRODUCTION_URL` and then `VERCEL_URL`.
 
 `AUTH_ALLOWED_HOSTS` is optional and accepts a comma-separated list of additional auth hosts or host patterns. Use hostnames only, not full URLs.
 

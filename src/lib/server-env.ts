@@ -104,6 +104,16 @@ function getConfiguredPublicAppOrigin() {
     return normalizeOrigin(appUrl, 'APP_URL');
   }
 
+  const vercelProductionUrl = getEnvValue('VERCEL_PROJECT_PRODUCTION_URL');
+  if (vercelProductionUrl) {
+    return normalizeOrigin(`https://${vercelProductionUrl}`, 'VERCEL_PROJECT_PRODUCTION_URL');
+  }
+
+  const vercelUrl = getEnvValue('VERCEL_URL');
+  if (vercelUrl) {
+    return normalizeOrigin(`https://${vercelUrl}`, 'VERCEL_URL');
+  }
+
   return getDeprecatedSiteUrlOrigin();
 }
 
