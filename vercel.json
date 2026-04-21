@@ -3,6 +3,12 @@
   "framework": "vite",
   "buildCommand": "npm run db:migrate && npm run build",
   "outputDirectory": "dist",
+  "crons": [
+    {
+      "path": "/api/health",
+      "schedule": "0 3 * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/dashboard",
