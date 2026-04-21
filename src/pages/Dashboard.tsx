@@ -6,7 +6,12 @@ import { toast } from 'sonner';
 import { AppHeader } from '../components/layout/AppHeader';
 import { Button } from '../components/ui/Button';
 import { apiRequest } from '../lib/api';
-import { type CompanyRole, getCompanyRoleLabel } from '../lib/company';
+import {
+  type CompanyInvoiceRoleFilter,
+  type CompanyRole,
+  getCompanyInvoiceRoleFilterLabel,
+  getCompanyRoleLabel,
+} from '../lib/company';
 import { formatCurrency } from '../lib/utils';
 import { useWorkspace } from '../lib/workspace';
 
@@ -19,7 +24,7 @@ type DashboardRecentInvoice = {
 };
 
 type DashboardSummary = {
-  appliedRoleFilter: CompanyRole;
+  appliedRoleFilter: CompanyInvoiceRoleFilter;
   recentInvoices: DashboardRecentInvoice[];
   totalInvoices: number;
   totalRevenue: number;
@@ -27,14 +32,14 @@ type DashboardSummary = {
 };
 
 const EMPTY_DASHBOARD_SUMMARY: DashboardSummary = {
-  appliedRoleFilter: 'member',
+  appliedRoleFilter: 'all',
   recentInvoices: [],
   totalInvoices: 0,
   totalRevenue: 0,
   uniqueClients: 0,
 };
 
-const DASHBOARD_ROLE_FILTERS: CompanyRole[] = ['owner', 'admin', 'member'];
+const DASHBOARD_ROLE_FILTERS: CompanyInvoiceRoleFilter[] = ['all', 'owner', 'admin', 'member'];
 const dashboardCache = new Map<string, DashboardSummary>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -52,8 +57,13 @@ function toFiniteNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function normalizeRoleFilter(value: unknown, fallbackRole: CompanyRole): CompanyRole {
-  return value === 'owner' || value === 'admin' || value === 'member' ? value : fallbackRole;
+function normalizeRoleFilter(
+  value: unknown,
+  fallbackRole: CompanyInvoiceRoleFilter,
+): CompanyInvoiceRoleFilter {
+  return value === 'all' || value === 'owner' || value === 'admin' || value === 'member'
+    ? value
+    : fallbackRole;
 }
 
 function normalizeRecentInvoice(value: unknown): DashboardRecentInvoice | null {
@@ -75,7 +85,10 @@ function normalizeRecentInvoice(value: unknown): DashboardRecentInvoice | null {
   };
 }
 
-function normalizeDashboardSummary(value: unknown, fallbackRole: CompanyRole): DashboardSummary {
+function normalizeDashboardSummary(
+  value: unknown,
+  fallbackRole: CompanyInvoiceRoleFilter,
+): DashboardSummary {
   if (!isRecord(value)) {
     return {
       ...EMPTY_DASHBOARD_SUMMARY,
@@ -119,15 +132,16 @@ function StatCard({ icon, label, value }: StatCardProps) {
 export function Dashboard() {
   const navigate = useNavigate();
   const { activeCompany } = useWorkspace();
-  const [roleFilter, setRoleFilter] = useState<CompanyRole>('member');
+  const [roleFilter, setRoleFilter] = useState<CompanyInvoiceRoleFilter>('all');
   const [dashboard, setDashboard] = useState<DashboardSummary>(EMPTY_DASHBOARD_SUMMARY);
   const [isLoading, setIsLoading] = useState(true);
   const canFilterInvoicesByRole = activeCompany?.permissions.canManageMembers ?? false;
   const activeRole = activeCompany?.membershipRole ?? 'member';
+  const defaultRoleFilter: CompanyInvoiceRoleFilter = canFilterInvoicesByRole ? 'all' : activeRole;
 
   useEffect(() => {
-    setRoleFilter(activeRole);
-  }, [activeCompany?.id, activeRole]);
+    setRoleFilter(defaultRoleFilter);
+  }, [activeCompany?.id, defaultRoleFilter]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -209,20 +223,20 @@ export function Dashboard() {
                       key={availableRole}
                       type="button"
                       onClick={() => setRoleFilter(availableRole)}
-                      className={`inline-flex items-center rounded-full border px-3 py-2 text-sm font-medium transition ${
-                        isActive
-                          ? 'border-primary bg-primary text-primary-foreground'
-                          : 'border-border bg-card text-card-foreground hover:bg-muted'
-                      }`}
+                        className={`inline-flex items-center rounded-full border px-3 py-2 text-sm font-medium transition ${
+                          isActive
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'border-border bg-card text-card-foreground hover:bg-muted'
+                        }`}
                     >
-                      {getCompanyRoleLabel(availableRole)}
+                      {getCompanyInvoiceRoleFilterLabel(availableRole)}
                     </button>
                   );
                 })}
               </div>
               <p className="text-sm text-muted-foreground">
-                {roleFilter === activeRole
-                  ? `Showing your ${getCompanyRoleLabel(roleFilter).toLowerCase()} invoices by default.`
+                {roleFilter === 'all'
+                  ? 'Showing every invoice created in this workspace.'
                   : `Showing invoices created by ${getCompanyRoleLabel(roleFilter).toLowerCase()} members in this workspace.`}
               </p>
             </div>

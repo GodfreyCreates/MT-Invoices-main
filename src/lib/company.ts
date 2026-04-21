@@ -1,4 +1,5 @@
 export type CompanyRole = 'owner' | 'admin' | 'member';
+export type CompanyInvoiceRoleFilter = CompanyRole | 'all';
 
 export type CompanyFormValues = {
   name: string;
@@ -235,4 +236,12 @@ export function getCompanyRoleLabel(role: CompanyRole) {
   }
 
   return 'Member';
+}
+
+export function getCompanyInvoiceRoleFilterLabel(filter: CompanyInvoiceRoleFilter) {
+  if (filter === 'all') {
+    return 'All';
+  }
+
+  return getCompanyRoleLabel(filter);
 }

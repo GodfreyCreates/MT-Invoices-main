@@ -7,7 +7,12 @@ import { AppHeader } from '../components/layout/AppHeader';
 import { Button } from '../components/ui/Button';
 import { useConfirmation } from '../components/ui/ConfirmationProvider';
 import { apiRequest } from '../lib/api';
-import { type CompanyRole, getCompanyRoleLabel } from '../lib/company';
+import {
+  type CompanyInvoiceRoleFilter,
+  type CompanyRole,
+  getCompanyInvoiceRoleFilterLabel,
+  getCompanyRoleLabel,
+} from '../lib/company';
 import { downloadInvoicePdf, downloadInvoicesPdf } from '../lib/invoice-pdf';
 import { cn } from '../lib/utils';
 import { useWorkspace } from '../lib/workspace';
@@ -21,11 +26,11 @@ type InvoiceListItem = Pick<
 };
 
 type InvoiceListResponse = {
-  appliedRoleFilter: CompanyRole;
+  appliedRoleFilter: CompanyInvoiceRoleFilter;
   invoices: InvoiceListItem[];
 };
 
-const INVOICE_ROLE_FILTERS: CompanyRole[] = ['owner', 'admin', 'member'];
+const INVOICE_ROLE_FILTERS: CompanyInvoiceRoleFilter[] = ['all', 'owner', 'admin', 'member'];
 const invoiceListCache = new Map<string, InvoiceListResponse>();
 
 export function Invoices() {
@@ -40,14 +45,15 @@ export function Invoices() {
   const [isBulkDownloading, setIsBulkDownloading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
-  const [roleFilter, setRoleFilter] = useState<CompanyRole>('member');
+  const [roleFilter, setRoleFilter] = useState<CompanyInvoiceRoleFilter>('all');
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const canFilterInvoicesByRole = activeCompany?.permissions.canManageMembers ?? false;
   const activeRole = activeCompany?.membershipRole ?? 'member';
+  const defaultRoleFilter: CompanyInvoiceRoleFilter = canFilterInvoicesByRole ? 'all' : activeRole;
 
   useEffect(() => {
-    setRoleFilter(activeRole);
-  }, [activeCompany?.id, activeRole]);
+    setRoleFilter(defaultRoleFilter);
+  }, [activeCompany?.id, defaultRoleFilter]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -333,14 +339,14 @@ export function Invoices() {
                             : 'border-border bg-card text-card-foreground hover:bg-muted',
                         )}
                       >
-                        {getCompanyRoleLabel(availableRole)}
+                        {getCompanyInvoiceRoleFilterLabel(availableRole)}
                       </button>
                     );
                   })}
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  {roleFilter === activeRole
-                    ? `Showing your ${getCompanyRoleLabel(roleFilter).toLowerCase()} invoices by default.`
+                  {roleFilter === 'all'
+                    ? 'Showing every invoice created in this workspace.'
                     : `Showing invoices created by ${getCompanyRoleLabel(roleFilter).toLowerCase()} members in this workspace.`}
                 </p>
               </div>

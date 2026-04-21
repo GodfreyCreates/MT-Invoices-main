@@ -126,7 +126,7 @@ type SanitizedSavedClientInput = {
 };
 type InviteUserRole = "admin" | "user";
 type CompanyMembershipRole = CompanyRole;
-type DashboardInvoiceRoleFilter = CompanyMembershipRole;
+type DashboardInvoiceRoleFilter = CompanyMembershipRole | "all";
 type SanitizedCompanyInput = {
   name: string;
   email: string;
@@ -378,8 +378,8 @@ function getDashboardInvoiceRoleFilter(
   }
 
   const normalizedRole = value.trim().toLowerCase();
-  if (!isCompanyRole(normalizedRole)) {
-    throw new HttpError(400, "roleFilter must be owner, admin, or member");
+  if (normalizedRole !== "all" && !isCompanyRole(normalizedRole)) {
+    throw new HttpError(400, "roleFilter must be all, owner, admin, or member");
   }
 
   return normalizedRole;
@@ -1171,7 +1171,9 @@ async function buildDashboardInvoiceWhere(
   requestedRoleFilter: unknown,
 ) {
   const invoiceAccess = getInvoiceAccessScope(access);
-  const defaultRoleFilter = invoiceAccess.membershipRole;
+  const defaultRoleFilter: DashboardInvoiceRoleFilter = invoiceAccess.canManageInvoices
+    ? "all"
+    : invoiceAccess.membershipRole;
   const appliedRoleFilter = getDashboardInvoiceRoleFilter(
     requestedRoleFilter,
     defaultRoleFilter,
@@ -1179,7 +1181,7 @@ async function buildDashboardInvoiceWhere(
 
   if (!invoiceAccess.canManageInvoices) {
     return {
-      appliedRoleFilter,
+      appliedRoleFilter: invoiceAccess.membershipRole,
       where: and(
         eq(invoices.companyId, invoiceAccess.companyId),
         eq(invoices.userId, invoiceAccess.userId),
@@ -1187,13 +1189,10 @@ async function buildDashboardInvoiceWhere(
     };
   }
 
-  if (appliedRoleFilter === invoiceAccess.membershipRole) {
+  if (appliedRoleFilter === "all") {
     return {
       appliedRoleFilter,
-      where: and(
-        eq(invoices.companyId, invoiceAccess.companyId),
-        eq(invoices.userId, invoiceAccess.userId),
-      ),
+      where: eq(invoices.companyId, invoiceAccess.companyId),
     };
   }
 
