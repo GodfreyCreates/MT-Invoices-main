@@ -55,6 +55,12 @@ type SessionRecord = {
 type CreateAppOptions = {
   serveClientApp?: boolean;
 };
+type PdfBrowserLaunchConfig = {
+  args: string[];
+  executablePath?: string;
+  headless: boolean | "shell";
+  mergeWithDefaultArgs: boolean;
+};
 type InvoiceExportTokenPayload = {
   version: typeof INVOICE_EXPORT_TOKEN_VERSION;
   companyId: Uuid;
@@ -1416,6 +1422,46 @@ function getChromeExecutablePath() {
   return platformCandidates.find((candidate) => fs.existsSync(candidate));
 }
 
+function shouldUseServerlessChromium() {
+  return (
+    process.env.VERCEL === "1" ||
+    typeof process.env.AWS_EXECUTION_ENV === "string" ||
+    typeof process.env.AWS_LAMBDA_FUNCTION_NAME === "string"
+  );
+}
+
+async function getPdfBrowserLaunchConfig(): Promise<PdfBrowserLaunchConfig> {
+  const executablePath = getChromeExecutablePath();
+
+  if (executablePath) {
+    return {
+      executablePath,
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      mergeWithDefaultArgs: false,
+    };
+  }
+
+  if (shouldUseServerlessChromium()) {
+    const chromiumModule = await import("@sparticuz/chromium");
+    const chromium = chromiumModule.default;
+    chromium.setGraphicsMode = false;
+
+    return {
+      executablePath: await chromium.executablePath(),
+      headless: "shell",
+      args: chromium.args,
+      mergeWithDefaultArgs: true,
+    };
+  }
+
+  return {
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    mergeWithDefaultArgs: false,
+  };
+}
+
 async function applyRequestCookiesToPage(page: Page, origin: string, cookieHeader?: string) {
   if (!cookieHeader?.trim()) {
     return;
@@ -1477,12 +1523,17 @@ async function waitForPdfDocument(page: Page) {
 async function renderPdfFromRoute(req: Request, routePath: string) {
   const origin = getRequestOrigin(req);
   const targetUrl = new URL(routePath, origin).toString();
-  const executablePath = getChromeExecutablePath();
   const { default: puppeteer } = await import("puppeteer");
+  const launchConfig = await getPdfBrowserLaunchConfig();
   const browser = await puppeteer.launch({
-    headless: true,
-    ...(executablePath ? { executablePath } : {}),
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    headless: launchConfig.headless,
+    ...(launchConfig.executablePath ? { executablePath: launchConfig.executablePath } : {}),
+    args: launchConfig.mergeWithDefaultArgs
+      ? puppeteer.defaultArgs({
+          args: launchConfig.args,
+          headless: launchConfig.headless,
+        })
+      : launchConfig.args,
   });
 
   try {
