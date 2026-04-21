@@ -29,7 +29,8 @@ async function getApp() {
   if (!appPromise) {
     appPromise = Promise.resolve()
       .then(async () => {
-        const serverModule = (await import("../server")) as AppServerModule;
+        const serverModule = ((await import("../dist/server.cjs").catch(() => import("../server.ts"))) ??
+          {}) as AppServerModule;
 
         if (typeof serverModule.createApp !== "function") {
           throw new Error("Server module is missing createApp");
