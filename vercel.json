@@ -5,6 +5,22 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/api/dashboard",
+      "destination": "/api?__pathname=dashboard"
+    },
+    {
+      "source": "/api/companies",
+      "destination": "/api?__pathname=companies"
+    },
+    {
+      "source": "/api/companies/:path*",
+      "destination": "/api?__pathname=companies/:path*"
+    },
+    {
+      "source": "/api/invoices",
+      "destination": "/api?__pathname=invoices"
+    },
+    {
       "source": "/api/invoices/pdf",
       "destination": "/api?__pathname=invoices/pdf"
     },
@@ -15,6 +31,14 @@
     {
       "source": "/api/invoices/export/render",
       "destination": "/api?__pathname=invoices/export/render"
+    },
+    {
+      "source": "/api/users",
+      "destination": "/api?__pathname=users"
+    },
+    {
+      "source": "/api/users/:path*",
+      "destination": "/api?__pathname=users/:path*"
     },
     {
       "source": "/api/:path*",

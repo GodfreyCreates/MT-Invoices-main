@@ -17,6 +17,7 @@ const VALID_INVOICE_THEMES = new Set([
 ]);
 
 type CompanyRole = 'owner' | 'admin' | 'member';
+type DashboardInvoiceRoleFilter = CompanyRole | 'all';
 type CompanyRecord = {
   id: string;
   name: string;
@@ -252,7 +253,10 @@ function getCompanyRole(value: unknown, field: string, defaultValue?: CompanyRol
   return normalized;
 }
 
-function getDashboardInvoiceRoleFilter(value: unknown, defaultValue: CompanyRole): CompanyRole {
+function getDashboardInvoiceRoleFilter(
+  value: unknown,
+  defaultValue: DashboardInvoiceRoleFilter,
+): DashboardInvoiceRoleFilter {
   if (value == null || value === '') {
     return defaultValue;
   }
@@ -262,8 +266,8 @@ function getDashboardInvoiceRoleFilter(value: unknown, defaultValue: CompanyRole
   }
 
   const normalized = value.trim().toLowerCase();
-  if (!isCompanyRole(normalized)) {
-    throw new HttpError(400, 'roleFilter must be owner, admin, or member');
+  if (normalized !== 'all' && !isCompanyRole(normalized)) {
+    throw new HttpError(400, 'roleFilter must be all, owner, admin, or member');
   }
 
   return normalized;
@@ -1179,15 +1183,25 @@ function getInvoiceAccessScope(access: CompanyAccessContext) {
 async function resolveDashboardInvoiceScope(access: CompanyAccessContext, requestedRoleFilter: unknown) {
   const admin = getAdminClient();
   const invoiceAccess = getInvoiceAccessScope(access);
+  const defaultRoleFilter: DashboardInvoiceRoleFilter = invoiceAccess.canManageInvoices
+    ? 'all'
+    : invoiceAccess.membershipRole;
   const appliedRoleFilter = getDashboardInvoiceRoleFilter(
     requestedRoleFilter,
-    invoiceAccess.membershipRole,
+    defaultRoleFilter,
   );
 
-  if (!invoiceAccess.canManageInvoices || appliedRoleFilter === invoiceAccess.membershipRole) {
+  if (!invoiceAccess.canManageInvoices) {
+    return {
+      appliedRoleFilter: invoiceAccess.membershipRole,
+      userIds: [invoiceAccess.userId],
+    };
+  }
+
+  if (appliedRoleFilter === 'all') {
     return {
       appliedRoleFilter,
-      userIds: [invoiceAccess.userId],
+      userIds: [],
     };
   }
 
@@ -2118,24 +2132,28 @@ async function handleDashboard(session: SessionRecord, target: URL) {
   const admin = getAdminClient();
   const access = await requireActiveCompanyAccess(session.user.id);
   const scope = await resolveDashboardInvoiceScope(access, target.searchParams.get('roleFilter'));
-
-  if (scope.userIds.length === 0) {
-    return jsonResponse(200, {
-      appliedRoleFilter: scope.appliedRoleFilter,
-      totalInvoices: 0,
-      uniqueClients: 0,
-      totalRevenue: 0,
-      recentInvoices: [],
-    });
-  }
-
-  const { data: invoiceRows, error: invoicesError } = await admin
+  let invoiceQuery = admin
     .from('invoices')
     .select('id, invoice_no, client_company_name, issue_date, updated_at, created_at, user_id')
     .eq('company_id', access.activeMembership!.companyId)
-    .in('user_id', scope.userIds)
     .order('updated_at', { ascending: false })
     .order('created_at', { ascending: false });
+
+  if (scope.appliedRoleFilter !== 'all') {
+    if (scope.userIds.length === 0) {
+      return jsonResponse(200, {
+        appliedRoleFilter: scope.appliedRoleFilter,
+        totalInvoices: 0,
+        uniqueClients: 0,
+        totalRevenue: 0,
+        recentInvoices: [],
+      });
+    }
+
+    invoiceQuery = invoiceQuery.in('user_id', scope.userIds);
+  }
+
+  const { data: invoiceRows, error: invoicesError } = await invoiceQuery;
 
   if (invoicesError) {
     throw new HttpError(500, invoicesError.message);
@@ -2213,21 +2231,25 @@ async function handleListInvoices(session: SessionRecord, target: URL) {
   const admin = getAdminClient();
   const access = await requireActiveCompanyAccess(session.user.id);
   const scope = await resolveDashboardInvoiceScope(access, target.searchParams.get('roleFilter'));
-
-  if (scope.userIds.length === 0) {
-    return jsonResponse(200, {
-      appliedRoleFilter: scope.appliedRoleFilter,
-      invoices: [],
-    });
-  }
-
-  const { data: invoiceRows, error } = await admin
+  let invoiceQuery = admin
     .from('invoices')
     .select('id, invoice_no, client_company_name, issue_date, due_date, user_id')
     .eq('company_id', access.activeMembership!.companyId)
-    .in('user_id', scope.userIds)
     .order('updated_at', { ascending: false })
     .order('created_at', { ascending: false });
+
+  if (scope.appliedRoleFilter !== 'all') {
+    if (scope.userIds.length === 0) {
+      return jsonResponse(200, {
+        appliedRoleFilter: scope.appliedRoleFilter,
+        invoices: [],
+      });
+    }
+
+    invoiceQuery = invoiceQuery.in('user_id', scope.userIds);
+  }
+
+  const { data: invoiceRows, error } = await invoiceQuery;
 
   if (error) {
     throw new HttpError(500, error.message);
