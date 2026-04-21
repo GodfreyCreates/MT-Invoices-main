@@ -3726,7 +3726,20 @@ async function startServer() {
   });
 }
 
-if (!process.env.VERCEL) {
+function isDirectServerEntry() {
+  const entryPath = process.argv[1];
+  if (!entryPath) {
+    return false;
+  }
+
+  const resolvedEntryPath = path.resolve(entryPath);
+  return (
+    resolvedEntryPath === path.resolve(process.cwd(), "server.ts") ||
+    resolvedEntryPath === path.resolve(process.cwd(), "dist/server.cjs")
+  );
+}
+
+if (!process.env.VERCEL && isDirectServerEntry()) {
   startServer().catch((error) => {
     console.error("Failed to start server", error);
     process.exit(1);

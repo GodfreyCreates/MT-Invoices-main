@@ -1,12 +1,11 @@
-import { createRequire } from "node:module";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 type AppHandler = (req: IncomingMessage, res: ServerResponse) => unknown;
-type LegacyServerModule = {
+type AppServerModule = {
   createApp?: () => Promise<AppHandler>;
 };
 
-let legacyAppPromise: Promise<AppHandler> | null = null;
+let appPromise: Promise<AppHandler> | null = null;
 
 function restoreApiPathFromRewrite(req: IncomingMessage) {
   const currentUrl = req.url ?? "/api";
@@ -26,30 +25,29 @@ function restoreApiPathFromRewrite(req: IncomingMessage) {
   req.url = `${parsedUrl.pathname}${search ? `?${search}` : ""}`;
 }
 
-async function getLegacyApp() {
-  if (!legacyAppPromise) {
-    legacyAppPromise = Promise.resolve()
-      .then(() => {
-        const require = createRequire(import.meta.url);
-        const serverModule = require("../dist/server.cjs") as LegacyServerModule;
+async function getApp() {
+  if (!appPromise) {
+    appPromise = Promise.resolve()
+      .then(async () => {
+        const serverModule = (await import("../server")) as AppServerModule;
 
         if (typeof serverModule.createApp !== "function") {
-          throw new Error("Legacy server bundle is missing createApp");
+          throw new Error("Server module is missing createApp");
         }
 
         return serverModule.createApp();
       })
       .catch((error) => {
-        legacyAppPromise = null;
+        appPromise = null;
         throw error;
       });
   }
 
-  return legacyAppPromise;
+  return appPromise;
 }
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   restoreApiPathFromRewrite(req);
-  const legacyApp = await getLegacyApp();
-  return legacyApp(req, res);
+  const app = await getApp();
+  return app(req, res);
 }
