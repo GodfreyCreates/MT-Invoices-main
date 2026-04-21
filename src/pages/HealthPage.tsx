@@ -163,7 +163,7 @@ function formatRuntimeLabel(runtime: ApiServiceRuntime) {
 const StatusBadge: React.FC<{ status: HealthDiagnostic['status'] | null }> = ({ status }) => {
   if (!status) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted px-3 py-1 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/30 backdrop-blur-sm px-3 py-1 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
         <Loader2 className="h-3 w-3 animate-spin" />Checking
       </span>
     );
@@ -172,20 +172,31 @@ const StatusBadge: React.FC<{ status: HealthDiagnostic['status'] | null }> = ({ 
   const Icon = isHealthy ? ShieldCheck : TriangleAlert;
   return (
     <span className={cn(
-      'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-widest',
-      isHealthy ? 'border-primary/20 bg-primary/10 text-primary' : 'border-destructive/20 bg-destructive/10 text-destructive'
+      'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-widest transition-all duration-300',
+      isHealthy 
+        ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.1)]' 
+        : 'border-rose-500/20 bg-rose-500/10 text-rose-500 animate-pulse'
     )}>
-      <Icon className="h-3 w-3" />
+      <Icon className={cn("h-3 w-3", isHealthy && "animate-pulse")} />
       {isHealthy ? 'Operational' : 'Degraded'}
     </span>
   );
 };
 
-const StatCell: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => {
+const StatCell: React.FC<{ label: string; value: React.ReactNode; color?: string }> = ({ label, value, color = 'primary' }) => {
+  const colorMap: Record<string, string> = {
+    primary: 'border-blue-500/50 text-blue-500',
+    emerald: 'border-emerald-500/50 text-emerald-500',
+    amber: 'border-amber-500/50 text-amber-500',
+    indigo: 'border-indigo-500/50 text-indigo-500',
+    violet: 'border-violet-500/50 text-violet-500',
+  };
+  
   return (
-    <div className="rounded-2xl border border-border bg-card/90 px-4 py-3">
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{label}</p>
-      <p className="mt-1.5 text-lg font-semibold text-foreground">{value ?? '—'}</p>
+    <div className="group relative overflow-hidden rounded-2xl border border-border bg-card/60 backdrop-blur-md px-4 py-3 transition-all hover:bg-card/80">
+      <div className={cn("absolute left-0 top-0 h-full w-1 transition-all group-hover:w-1.5", colorMap[color]?.split(' ')[0] || 'bg-primary')} />
+      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{label}</p>
+      <p className={cn("mt-1.5 text-lg font-bold tracking-tight", colorMap[color]?.split(' ')[1] || 'text-foreground')}>{value ?? '—'}</p>
     </div>
   );
 };
@@ -200,29 +211,39 @@ const CheckCard: React.FC<{
 }> = ({ title, icon: Icon, status, summary, meta, details }) => {
   const isPassing = status === 'pass';
   return (
-    <article className="relative overflow-hidden rounded-2xl border border-border bg-card/95 p-4 shadow-sm">
-      <div className={cn('absolute inset-x-0 top-0 h-px', isPassing ? 'bg-primary/50' : 'bg-destructive/50')} aria-hidden="true" />
+    <article className="group relative overflow-hidden rounded-2xl border border-border bg-card/40 backdrop-blur-md p-4 transition-all duration-500 hover:bg-card/60 hover:shadow-lg hover:shadow-primary/5">
+      <div className={cn(
+        'absolute inset-x-0 top-0 h-[2px] transition-all duration-500 group-hover:h-[3px]', 
+        isPassing ? 'bg-emerald-500/40 group-hover:bg-emerald-500/60' : 'bg-rose-500/40 group-hover:bg-rose-500/60'
+      )} aria-hidden="true" />
+      
       <div className="flex items-start justify-between gap-3">
         <div className={cn(
-          'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border',
-          isPassing ? 'border-primary/15 bg-primary/10 text-primary' : 'border-destructive/15 bg-destructive/10 text-destructive'
+          'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-all duration-500 group-hover:scale-110',
+          isPassing 
+            ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500 group-hover:bg-emerald-500/20' 
+            : 'border-rose-500/20 bg-rose-500/10 text-rose-500 group-hover:bg-rose-500/20'
         )}>
-          <Icon className="h-4 w-4" />
+          <Icon className="h-5 w-5" />
         </div>
         <span className={cn(
-          'rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest',
-          isPassing ? 'border-primary/20 bg-primary/10 text-primary' : 'border-destructive/20 bg-destructive/10 text-destructive'
+          'rounded-full border px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest transition-colors',
+          isPassing 
+            ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500' 
+            : 'border-rose-500/20 bg-rose-500/10 text-rose-500 animate-pulse'
         )}>
           {isPassing ? 'Pass' : 'Fail'}
         </span>
       </div>
-      <div className="mt-3">
-        <p className="text-sm font-semibold text-foreground">{title}</p>
-        <p className="mt-1 text-sm text-muted-foreground">{summary}</p>
+      <div className="mt-4">
+        <p className="text-sm font-bold text-foreground transition-colors group-hover:text-primary">{title}</p>
+        <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{summary}</p>
       </div>
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-        <span className="rounded-full bg-muted px-2.5 py-1 font-medium text-foreground">{meta}</span>
-        {details ? <span className="text-muted-foreground">{details}</span> : null}
+      <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
+        <span className="rounded-full border border-border bg-muted/50 px-3 py-1 font-semibold text-foreground backdrop-blur-sm">
+          {meta}
+        </span>
+        {details ? <span className="text-[11px] font-medium text-muted-foreground/80">{details}</span> : null}
       </div>
     </article>
   );
@@ -230,43 +251,66 @@ const CheckCard: React.FC<{
 
 const ApiServiceCard: React.FC<{ service: ApiServiceHealth }> = ({ service }) => {
   const isPassing = service.status === 'pass';
+  const latency = service.latencyMs;
+  
+  const latencyColor = !latency ? 'text-muted-foreground' 
+    : latency < 100 ? 'text-emerald-500'
+    : latency < 350 ? 'text-amber-500'
+    : 'text-rose-500';
+
   return (
-    <article className="rounded-2xl border border-border bg-card/95 p-4 shadow-sm">
+    <article className="group relative overflow-hidden rounded-2xl border border-border bg-card/40 backdrop-blur-md p-5 transition-all duration-300 hover:bg-card/60 hover:shadow-xl hover:shadow-primary/5">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-foreground">{service.name}</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">{service.summary}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-bold text-foreground group-hover:text-primary transition-colors">{service.name}</p>
+            {service.runtime === 'supabase-edge' && (
+              <span className="rounded bg-indigo-500/10 px-1 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-indigo-500">Edge</span>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground/80">{service.summary}</p>
         </div>
-        <span className={cn(
-          'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest',
-          isPassing ? 'border-primary/20 bg-primary/10 text-primary' : 'border-destructive/20 bg-destructive/10 text-destructive'
-        )}>
-          {isPassing ? 'Healthy' : 'Issue'}
-        </span>
+        <div className="flex flex-col items-end gap-1.5">
+          <span className={cn(
+            'shrink-0 rounded-full border px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest transition-all',
+            isPassing 
+              ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500' 
+              : 'border-rose-500/20 bg-rose-500/10 text-rose-500 animate-pulse'
+          )}>
+            {isPassing ? 'Healthy' : 'Issue'}
+          </span>
+          <p className={cn("text-[10px] font-bold tabular-nums", latencyColor)}>
+            {formatLatency(service.latencyMs)}
+          </p>
+        </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-4 gap-2">
+      <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
         {[
-          { label: 'Runtime', value: formatRuntimeLabel(service.runtime) },
-          { label: 'Access', value: formatAccessLabel(service.access) },
-          { label: 'Latency', value: formatLatency(service.latencyMs) },
-          { label: 'Uptime', value: typeof service.uptimeSeconds === 'number' ? formatUptime(service.uptimeSeconds) : 'On demand' },
-        ].map(({ label, value }) => (
-          <div key={label} className="rounded-xl bg-muted/60 px-3 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{label}</p>
-            <p className="mt-1 text-xs font-medium text-foreground">{value}</p>
+          { label: 'Runtime', value: formatRuntimeLabel(service.runtime), icon: HardDrive },
+          { label: 'Access', value: formatAccessLabel(service.access), icon: ShieldCheck },
+          { label: 'Uptime', value: typeof service.uptimeSeconds === 'number' ? formatUptime(service.uptimeSeconds) : 'On demand', icon: Activity },
+          { label: 'Status', value: service.statusCode ? `HTTP ${service.statusCode}` : '—', icon: Waypoints },
+        ].map(({ label, value, icon: Icon }) => (
+          <div key={label} className="group/stat rounded-xl border border-border/50 bg-background/40 px-3 py-2 transition-all hover:bg-background/60">
+            <div className="flex items-center gap-1.5 opacity-60 group-hover/stat:opacity-100 transition-opacity">
+              <Icon className="h-3 w-3 text-primary" />
+              <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">{label}</p>
+            </div>
+            <p className="mt-1 text-[11px] font-bold text-foreground">{value}</p>
           </div>
         ))}
       </div>
 
-      <div className="mt-3 rounded-xl border border-border bg-background px-3 py-2">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Endpoint</p>
-        <p className="mt-1 break-all text-xs font-medium text-foreground">{service.endpoint}</p>
+      <div className="mt-4 rounded-xl border border-border/50 bg-background/40 px-3 py-2 transition-all hover:bg-background/60">
+        <div className="flex items-center justify-between">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground opacity-60">Public Endpoint</p>
+          <ArrowUpRight className="h-3 w-3 text-muted-foreground/40" />
+        </div>
+        <p className="mt-1 break-all text-[11px] font-medium text-muted-foreground transition-colors group-hover:text-foreground">
+          {service.endpoint}
+        </p>
       </div>
-
-      {service.statusCode ? (
-        <p className="mt-2 text-xs text-muted-foreground">HTTP {service.statusCode}{service.message ? ` · ${service.message}` : ''}</p>
-      ) : null}
     </article>
   );
 };
@@ -361,8 +405,15 @@ export function HealthPage() {
   }, [apiServices, health]);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="relative min-h-screen overflow-hidden bg-background text-foreground">
+      {/* Background Mesh */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+        <div className="absolute -left-[10%] -top-[10%] h-[40%] w-[40%] animate-pulse rounded-full bg-primary/5 blur-[120px]" />
+        <div className="absolute -right-[5%] top-[20%] h-[30%] w-[30%] rounded-full bg-emerald-500/5 blur-[100px]" />
+        <div className="absolute bottom-[10%] left-[20%] h-[35%] w-[35%] rounded-full bg-indigo-500/5 blur-[110px]" />
+      </div>
+
+      <main className="relative mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
 
         {/* Header */}
         <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -419,11 +470,11 @@ export function HealthPage() {
 
             {/* Stat cells */}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-              <StatCell label="Environment" value={health?.service.environment} />
-              <StatCell label="Runtime" value={health?.service.runtime} />
-              <StatCell label="Uptime" value={health ? formatUptime(health.service.uptimeSeconds) : null} />
-              <StatCell label="API services" value={health?.api ? `${health.api.totals.healthyServices}/${health.api.totals.services}` : null} />
-              <StatCell label="API routes" value={health?.api ? `${health.api.totals.healthyRoutes}/${health.api.totals.routes}` : null} />
+              <StatCell label="Environment" value={health?.service.environment} color="indigo" />
+              <StatCell label="Runtime" value={health?.service.runtime} color="violet" />
+              <StatCell label="Uptime" value={health ? formatUptime(health.service.uptimeSeconds) : null} color="amber" />
+              <StatCell label="API services" value={health?.api ? `${health.api.totals.healthyServices}/${health.api.totals.services}` : null} color="emerald" />
+              <StatCell label="API routes" value={health?.api ? `${health.api.totals.healthyRoutes}/${health.api.totals.routes}` : null} color="primary" />
             </div>
 
             {/* Check cards */}
