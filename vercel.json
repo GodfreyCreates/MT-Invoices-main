@@ -47,6 +47,10 @@
       "destination": "/api?__pathname=users/:path*"
     },
     {
+      "source": "/api/health",
+      "destination": "/api?__pathname=health"
+    },
+    {
       "source": "/api/:path*",
       "destination": "https://vvznmnxheqjvosnzkxkl.supabase.co/functions/v1/app-api?path=/api/:path*"
     },

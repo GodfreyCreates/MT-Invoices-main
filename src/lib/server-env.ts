@@ -8,7 +8,12 @@ const DEFAULT_LOCAL_DEV_HOSTS = ['localhost:5173', '127.0.0.1:5173'] as const;
 let hasWarnedAboutSiteUrl = false;
 
 function getEnvValue(name: string) {
-  return process.env[name]?.trim();
+  const trimmedValue = process.env[name]?.trim();
+  if (!trimmedValue || trimmedValue === '""' || trimmedValue === "''") {
+    return undefined;
+  }
+
+  return trimmedValue;
 }
 
 function isHostedEnvironment() {

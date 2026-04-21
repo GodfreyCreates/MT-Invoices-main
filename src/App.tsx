@@ -37,6 +37,9 @@ const InvoicePreviewPage = React.lazy(() =>
 const InvoicePrintPage = React.lazy(() =>
   import('./pages/InvoicePrintPage').then((module) => ({ default: module.InvoicePrintPage })),
 );
+const HealthPage = React.lazy(() =>
+  import('./pages/HealthPage').then((module) => ({ default: module.HealthPage })),
+);
 const UsersPage = React.lazy(() =>
   import('./pages/UsersPage').then((module) => ({ default: module.UsersPage })),
 );
@@ -66,6 +69,7 @@ function AppRoutes() {
         <Route path="/" element={<Navigate to="/auth" replace />} />
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/invite/:token" element={<LazyRoute><AcceptInvitationPage /></LazyRoute>} />
+        <Route path="/health" element={<LazyRoute><HealthPage /></LazyRoute>} />
         <Route path="/verify" element={<LazyRoute><VerifyInvoice /></LazyRoute>} />
         <Route path="/print/invoice/:id" element={<LazyRoute><InvoicePrintPage /></LazyRoute>} />
         <Route path="/print/invoices" element={<LazyRoute><InvoicePrintPage /></LazyRoute>} />

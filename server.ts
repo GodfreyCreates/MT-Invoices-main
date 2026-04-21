@@ -19,7 +19,7 @@ import type {
 } from "./src/lib/company";
 import { DEFAULT_INVOICE_THEME, isInvoiceThemeId } from "./src/lib/invoice-themes";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "./src/lib/supabase-server";
-import { getAppSecret, getPublicAppOrigin } from "./src/lib/server-env";
+import { getAppSecret, getPublicAppOrigin, getSupabaseUrl } from "./src/lib/server-env";
 import {
   deleteImageFromStorage,
   getAppStorageBucketHealth,
@@ -141,6 +141,56 @@ type SanitizedCompanyInput = {
   branchCode: string;
 };
 type HealthCheckStatus = "pass" | "fail";
+type ApiServiceRuntime = "node" | "supabase-edge";
+type ApiServiceAccess = "public" | "protected" | "mixed";
+type ApiServiceId =
+  | "node-api"
+  | "app-api"
+  | "auth-session"
+  | "auth-invitations"
+  | "auth-storage-images";
+type ApiServiceHealth = {
+  id: ApiServiceId;
+  name: string;
+  runtime: ApiServiceRuntime;
+  access: ApiServiceAccess;
+  endpoint: string;
+  status: HealthCheckStatus;
+  ok: boolean;
+  latencyMs: number | null;
+  uptimeSeconds: number | null;
+  statusCode: number | null;
+  summary: string;
+  message?: string;
+};
+type ApiRouteHealth = {
+  method: string;
+  path: string;
+  serviceId: ApiServiceId;
+  serviceName: string;
+  runtime: ApiServiceRuntime;
+  access: ApiServiceAccess;
+  status: HealthCheckStatus;
+  ok: boolean;
+  monitoring: "direct" | "derived";
+  summary: string;
+};
+type ApiMonitoringSnapshot = {
+  status: HealthCheckStatus;
+  ok: boolean;
+  summary: string;
+  services: ApiServiceHealth[];
+  routes: ApiRouteHealth[];
+  totals: {
+    services: number;
+    routes: number;
+    healthyServices: number;
+    healthyRoutes: number;
+    publicRoutes: number;
+    protectedRoutes: number;
+    mixedRoutes: number;
+  };
+};
 type HealthDiagnostic = {
   status: "ok" | "degraded";
   timestamp: string;
@@ -183,6 +233,21 @@ type HealthDiagnostic = {
       message?: string;
     };
   };
+  api: ApiMonitoringSnapshot;
+};
+type ApiRouteDefinition = {
+  method: string;
+  path: string;
+  access: ApiServiceAccess;
+  monitoring: "direct" | "derived";
+  summary: string;
+};
+type ApiServiceDefinition = {
+  id: ApiServiceId;
+  name: string;
+  runtime: ApiServiceRuntime;
+  access: ApiServiceAccess;
+  routes: readonly ApiRouteDefinition[];
 };
 type ApiErrorResponse = {
   error: string;
@@ -219,6 +284,276 @@ type CompanyAccessContext = {
   memberCounts: Map<string, number>;
   activeMembership: CompanyAccessMembership | null;
 };
+
+const NODE_API_ROUTE_DEFINITIONS = [
+  {
+    method: "GET",
+    path: "/api/health",
+    access: "public",
+    monitoring: "direct",
+    summary: "Primary machine-readable health endpoint with browser redirect support.",
+  },
+  {
+    method: "GET",
+    path: "/api/dashboard",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Workspace dashboard analytics and invoice rollups.",
+  },
+  {
+    method: "GET, POST",
+    path: "/api/companies",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Company workspace listing and company creation.",
+  },
+  {
+    method: "POST",
+    path: "/api/companies/active",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Active company switching for the current session.",
+  },
+  {
+    method: "GET, PATCH",
+    path: "/api/companies/:id",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Company detail fetch and company profile updates.",
+  },
+  {
+    method: "POST",
+    path: "/api/companies/:id/members",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Company member invitation and assignment workflow.",
+  },
+  {
+    method: "PATCH, DELETE",
+    path: "/api/companies/:id/members/:membershipId",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Company membership role changes and removals.",
+  },
+  {
+    method: "DELETE",
+    path: "/api/companies/:id/logo",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Company document logo removal.",
+  },
+  {
+    method: "GET",
+    path: "/api/users",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Admin user directory and account management.",
+  },
+  {
+    method: "DELETE",
+    path: "/api/users/:id",
+    access: "protected",
+    monitoring: "derived",
+    summary: "User deletion with company membership cleanup.",
+  },
+  {
+    method: "GET",
+    path: "/api/invoices",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Invoice list endpoint for the main invoices workspace.",
+  },
+  {
+    method: "GET",
+    path: "/api/invoices/pdf",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Batch PDF download generation.",
+  },
+  {
+    method: "GET",
+    path: "/api/invoices/:id/pdf",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Single invoice PDF generation and download.",
+  },
+  {
+    method: "GET",
+    path: "/api/invoices/export/render",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Invoice export render pipeline for printable batch views.",
+  },
+] as const satisfies readonly ApiRouteDefinition[];
+
+const APP_API_ROUTE_DEFINITIONS = [
+  {
+    method: "GET",
+    path: "/api/branding",
+    access: "public",
+    monitoring: "derived",
+    summary: "Public branding asset lookup for the active site logo.",
+  },
+  {
+    method: "GET",
+    path: "/api/verify-invoice/:token",
+    access: "public",
+    monitoring: "derived",
+    summary: "Public invoice verification by verification token.",
+  },
+  {
+    method: "GET, POST",
+    path: "/api/clients",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Saved client listing and creation for the active workspace.",
+  },
+  {
+    method: "PATCH, DELETE",
+    path: "/api/clients/:id",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Saved client edits and deletions.",
+  },
+  {
+    method: "GET",
+    path: "/api/settings/summary",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Account and workspace settings summary.",
+  },
+  {
+    method: "GET",
+    path: "/api/settings/sessions",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Active device and session inventory.",
+  },
+  {
+    method: "DELETE",
+    path: "/api/settings/sessions/others",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Revoke all other active sessions for the current user.",
+  },
+  {
+    method: "DELETE",
+    path: "/api/settings/sessions/:id",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Revoke a specific active session.",
+  },
+  {
+    method: "DELETE",
+    path: "/api/settings/logos/:kind",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Delete site or workspace branding images.",
+  },
+  {
+    method: "DELETE",
+    path: "/api/settings/logo",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Legacy settings logo deletion route.",
+  },
+  {
+    method: "GET",
+    path: "/api/invoices/export",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Invoice export data retrieval for batch rendering.",
+  },
+  {
+    method: "GET",
+    path: "/api/invoices/:id",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Single invoice detail retrieval for preview and editing.",
+  },
+  {
+    method: "POST",
+    path: "/api/invoices",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Invoice creation and update persistence.",
+  },
+  {
+    method: "DELETE",
+    path: "/api/invoices/:id",
+    access: "protected",
+    monitoring: "derived",
+    summary: "Invoice deletion for a saved record.",
+  },
+] as const satisfies readonly ApiRouteDefinition[];
+
+const AUTH_SESSION_ROUTE_DEFINITIONS = [
+  {
+    method: "GET",
+    path: "/functions/v1/auth-session",
+    access: "protected",
+    monitoring: "direct",
+    summary: "Resolve the current authenticated user session and profile.",
+  },
+] as const satisfies readonly ApiRouteDefinition[];
+
+const AUTH_INVITATIONS_ROUTE_DEFINITIONS = [
+  {
+    method: "POST",
+    path: "/functions/v1/auth-invitations",
+    access: "mixed",
+    monitoring: "direct",
+    summary: "Invitation create, lookup, and accept workflow.",
+  },
+] as const satisfies readonly ApiRouteDefinition[];
+
+const AUTH_STORAGE_ROUTE_DEFINITIONS = [
+  {
+    method: "POST, DELETE",
+    path: "/functions/v1/auth-storage-images",
+    access: "protected",
+    monitoring: "direct",
+    summary: "Authenticated logo and document image upload management.",
+  },
+] as const satisfies readonly ApiRouteDefinition[];
+
+const API_SERVICE_CATALOG = [
+  {
+    id: "node-api",
+    name: "Node API gateway",
+    runtime: "node",
+    access: "mixed",
+    routes: NODE_API_ROUTE_DEFINITIONS,
+  },
+  {
+    id: "app-api",
+    name: "Supabase app-api",
+    runtime: "supabase-edge",
+    access: "mixed",
+    routes: APP_API_ROUTE_DEFINITIONS,
+  },
+  {
+    id: "auth-session",
+    name: "Supabase auth-session",
+    runtime: "supabase-edge",
+    access: "protected",
+    routes: AUTH_SESSION_ROUTE_DEFINITIONS,
+  },
+  {
+    id: "auth-invitations",
+    name: "Supabase auth-invitations",
+    runtime: "supabase-edge",
+    access: "mixed",
+    routes: AUTH_INVITATIONS_ROUTE_DEFINITIONS,
+  },
+  {
+    id: "auth-storage-images",
+    name: "Supabase auth-storage-images",
+    runtime: "supabase-edge",
+    access: "protected",
+    routes: AUTH_STORAGE_ROUTE_DEFINITIONS,
+  },
+] as const satisfies readonly ApiServiceDefinition[];
 
 class HttpError extends Error {
   status: number;
@@ -2128,6 +2463,20 @@ function getRequestId(req: Request) {
   return randomUUID();
 }
 
+function shouldServeHealthPage(req: Request) {
+  const requestUrl = new URL(req.originalUrl || req.url || "/api/health", "http://mt-invoices.local");
+  const requestedFormat = requestUrl.searchParams.get("format")?.trim().toLowerCase();
+  if (requestedFormat === "json") {
+    return false;
+  }
+
+  const accept = req.get("accept")?.toLowerCase() ?? "";
+  const fetchDestination = req.get("sec-fetch-dest")?.toLowerCase() ?? "";
+  const fetchMode = req.get("sec-fetch-mode")?.toLowerCase() ?? "";
+
+  return accept.includes("text/html") || fetchDestination === "document" || fetchMode === "navigate";
+}
+
 function getApiErrorResponse(errorMessage: string, requestId?: string): ApiErrorResponse {
   return requestId ? { error: errorMessage, requestId } : { error: errorMessage };
 }
@@ -2212,6 +2561,353 @@ function getEnvironmentName() {
   return process.env.VERCEL_ENV?.trim() || process.env.NODE_ENV?.trim() || "development";
 }
 
+function getSupabaseFunctionsBaseUrl() {
+  return `${getSupabaseUrl().replace(/\/+$/, "")}/functions/v1`;
+}
+
+function getSupabaseFunctionMonitorEndpoint(functionName: string, path?: string) {
+  if (!path) {
+    return `/functions/v1/${functionName}`;
+  }
+
+  return `/functions/v1/${functionName}?path=${encodeURIComponent(path)}`;
+}
+
+function getHealthApiSummary(services: ApiServiceHealth[]) {
+  const healthyServices = services.filter((service) => service.ok).length;
+  if (healthyServices === services.length) {
+    return "All monitored API services are responding within the expected health budget.";
+  }
+
+  return `${healthyServices} of ${services.length} monitored API services are currently healthy.`;
+}
+
+function getApiProbeMessage(bodyText: string | null, fallbackMessage: string) {
+  if (!bodyText) {
+    return fallbackMessage;
+  }
+
+  try {
+    const payload = JSON.parse(bodyText) as { error?: unknown; message?: unknown };
+    if (typeof payload.error === "string" && payload.error.trim()) {
+      return payload.error.trim();
+    }
+    if (typeof payload.message === "string" && payload.message.trim()) {
+      return payload.message.trim();
+    }
+  } catch {
+    // Ignore non-JSON probe bodies and fall back to the raw text.
+  }
+
+  const trimmedBody = bodyText.trim();
+  return trimmedBody || fallbackMessage;
+}
+
+function isHealthDiagnosticPayload(value: unknown): value is Pick<HealthDiagnostic, "status" | "summary" | "service"> {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (record.status !== "ok" && record.status !== "degraded") {
+    return false;
+  }
+
+  if (typeof record.summary !== "string") {
+    return false;
+  }
+
+  if (!record.service || typeof record.service !== "object") {
+    return false;
+  }
+
+  const service = record.service as Record<string, unknown>;
+  return typeof service.runtime === "string";
+}
+
+function isLegacyAppApiHealthPayload(value: unknown): value is {
+  ok: boolean;
+  checks?: {
+    database?: { ok?: boolean; latencyMs?: number };
+    storage?: { ok?: boolean; latencyMs?: number };
+  };
+  totalLatencyMs?: number;
+  missingEnvKeys?: string[];
+} {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return typeof record.ok === "boolean";
+}
+
+async function probeEdgeFunctionAvailability(options: {
+  id: Exclude<ApiServiceId, "node-api" | "app-api">;
+  name: string;
+  access: ApiServiceAccess;
+  endpointLabel: string;
+  requestUrl: string;
+  requestInit?: RequestInit;
+  successStatusCodes: readonly number[];
+  successSummary: string;
+  failureSummary: string;
+}) {
+  const startedAt = Date.now();
+
+  try {
+    const response = await withHealthTimeout(
+      fetch(options.requestUrl, options.requestInit),
+      `${options.name} check timed out`,
+    );
+    const latencyMs = Date.now() - startedAt;
+    const responseBody = await response.text();
+    const ok = options.successStatusCodes.includes(response.status);
+
+    return {
+      id: options.id,
+      name: options.name,
+      runtime: "supabase-edge" as const,
+      access: options.access,
+      endpoint: options.endpointLabel,
+      status: ok ? "pass" : "fail",
+      ok,
+      latencyMs,
+      uptimeSeconds: null,
+      statusCode: response.status,
+      summary: ok ? options.successSummary : options.failureSummary,
+      ...(ok
+        ? {}
+        : {
+            message: getApiProbeMessage(
+              responseBody,
+              `${options.name} returned an unexpected status code (${response.status}).`,
+            ),
+          }),
+    } satisfies ApiServiceHealth;
+  } catch (error) {
+    return {
+      id: options.id,
+      name: options.name,
+      runtime: "supabase-edge",
+      access: options.access,
+      endpoint: options.endpointLabel,
+      status: "fail",
+      ok: false,
+      latencyMs: Date.now() - startedAt,
+      uptimeSeconds: null,
+      statusCode: null,
+      summary: options.failureSummary,
+      message: error instanceof Error ? error.message : `${options.name} probe failed`,
+    } satisfies ApiServiceHealth;
+  }
+}
+
+async function probeAppApiService() {
+  const endpointLabel = getSupabaseFunctionMonitorEndpoint("app-api", "/api/health?format=json");
+  const requestUrl = `${getSupabaseFunctionsBaseUrl()}/app-api?path=${encodeURIComponent("/api/health?format=json")}`;
+  const startedAt = Date.now();
+
+  try {
+    const response = await withHealthTimeout(
+      fetch(requestUrl, {
+        headers: {
+          Accept: "application/json",
+        },
+      }),
+      "Supabase app-api check timed out",
+    );
+    const latencyMs = Date.now() - startedAt;
+    const responseBody = (await response.json().catch(() => null)) as unknown;
+
+    if (!isHealthDiagnosticPayload(responseBody)) {
+      if (isLegacyAppApiHealthPayload(responseBody)) {
+        const ok =
+          response.status < 500 &&
+          responseBody.ok &&
+          Array.isArray(responseBody.missingEnvKeys) &&
+          responseBody.missingEnvKeys.length === 0;
+
+        return {
+          id: "app-api",
+          name: "Supabase app-api",
+          runtime: "supabase-edge",
+          access: "mixed",
+          endpoint: endpointLabel,
+          status: ok ? "pass" : "fail",
+          ok,
+          latencyMs:
+            typeof responseBody.totalLatencyMs === "number" ? responseBody.totalLatencyMs : latencyMs,
+          uptimeSeconds: null,
+          statusCode: response.status,
+          summary: ok
+            ? "Supabase app-api is reachable and its database and storage checks are passing."
+            : "Supabase app-api responded but reported a degraded legacy health payload.",
+          ...(ok
+            ? {}
+            : {
+                message: "The deployed app-api function reported an unhealthy legacy health response.",
+              }),
+        } satisfies ApiServiceHealth;
+      }
+
+      return {
+        id: "app-api",
+        name: "Supabase app-api",
+        runtime: "supabase-edge",
+        access: "mixed",
+        endpoint: endpointLabel,
+        status: "fail",
+        ok: false,
+        latencyMs,
+        uptimeSeconds: null,
+        statusCode: response.status,
+        summary: "Supabase app-api health payload is malformed.",
+        message: "Health probe returned an unexpected payload structure.",
+      } satisfies ApiServiceHealth;
+    }
+
+    const ok = response.status < 500 && responseBody.status === "ok";
+    return {
+      id: "app-api",
+      name: "Supabase app-api",
+      runtime: "supabase-edge",
+      access: "mixed",
+      endpoint: endpointLabel,
+      status: ok ? "pass" : "fail",
+      ok,
+      latencyMs,
+      uptimeSeconds:
+        typeof responseBody.service.uptimeSeconds === "number" ? responseBody.service.uptimeSeconds : null,
+      statusCode: response.status,
+      summary: responseBody.summary,
+      ...(ok ? {} : { message: responseBody.summary }),
+    } satisfies ApiServiceHealth;
+  } catch (error) {
+    return {
+      id: "app-api",
+      name: "Supabase app-api",
+      runtime: "supabase-edge",
+      access: "mixed",
+      endpoint: endpointLabel,
+      status: "fail",
+      ok: false,
+      latencyMs: Date.now() - startedAt,
+      uptimeSeconds: null,
+      statusCode: null,
+      summary: "Supabase app-api is unavailable.",
+      message: error instanceof Error ? error.message : "Supabase app-api probe failed",
+    } satisfies ApiServiceHealth;
+  }
+}
+
+async function getApiMonitoringSnapshot(options: {
+  nodeService: ApiServiceHealth;
+}) {
+  const functionsBaseUrl = getSupabaseFunctionsBaseUrl();
+  const [appApiService, authSessionService, authInvitationsService, authStorageImagesService] =
+    await Promise.all([
+      probeAppApiService(),
+      probeEdgeFunctionAvailability({
+        id: "auth-session",
+        name: "Supabase auth-session",
+        access: "protected",
+        endpointLabel: getSupabaseFunctionMonitorEndpoint("auth-session"),
+        requestUrl: `${functionsBaseUrl}/auth-session`,
+        requestInit: {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+          },
+        },
+        successStatusCodes: [200, 401],
+        successSummary: "Session resolution function is reachable and returning an auth-aware response.",
+        failureSummary: "Session resolution function is unavailable.",
+      }),
+      probeEdgeFunctionAvailability({
+        id: "auth-invitations",
+        name: "Supabase auth-invitations",
+        access: "mixed",
+        endpointLabel: getSupabaseFunctionMonitorEndpoint("auth-invitations"),
+        requestUrl: `${functionsBaseUrl}/auth-invitations`,
+        requestInit: {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "get",
+            token: createUuid(),
+          }),
+        },
+        successStatusCodes: [200, 404, 409, 410],
+        successSummary: "Invitation workflow function is reachable and processing routed actions.",
+        failureSummary: "Invitation workflow function is unavailable.",
+      }),
+      probeEdgeFunctionAvailability({
+        id: "auth-storage-images",
+        name: "Supabase auth-storage-images",
+        access: "protected",
+        endpointLabel: getSupabaseFunctionMonitorEndpoint("auth-storage-images"),
+        requestUrl: `${functionsBaseUrl}/auth-storage-images`,
+        requestInit: {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+          },
+        },
+        successStatusCodes: [200, 401],
+        successSummary: "Authenticated storage helper is reachable and enforcing access control.",
+        failureSummary: "Authenticated storage helper is unavailable.",
+      }),
+    ]);
+
+  const services = [
+    options.nodeService,
+    appApiService,
+    authSessionService,
+    authInvitationsService,
+    authStorageImagesService,
+  ] as const;
+  const serviceById = new Map<ApiServiceId, ApiServiceHealth>(services.map((service) => [service.id, service]));
+  const routes = API_SERVICE_CATALOG.flatMap((serviceDefinition) => {
+    const monitoredService = serviceById.get(serviceDefinition.id);
+    return serviceDefinition.routes.map((route) => ({
+      method: route.method,
+      path: route.path,
+      serviceId: serviceDefinition.id,
+      serviceName: serviceDefinition.name,
+      runtime: serviceDefinition.runtime,
+      access: route.access,
+      status: monitoredService?.status ?? "fail",
+      ok: monitoredService?.ok ?? false,
+      monitoring: route.monitoring,
+      summary: route.summary,
+    })) satisfies ApiRouteHealth[];
+  });
+
+  const healthyServices = services.filter((service) => service.ok).length;
+  const healthyRoutes = routes.filter((route) => route.ok).length;
+
+  return {
+    status: services.every((service) => service.ok) ? "pass" : "fail",
+    ok: services.every((service) => service.ok),
+    summary: getHealthApiSummary([...services]),
+    services: [...services],
+    routes,
+    totals: {
+      services: services.length,
+      routes: routes.length,
+      healthyServices,
+      healthyRoutes,
+      publicRoutes: routes.filter((route) => route.access === "public").length,
+      protectedRoutes: routes.filter((route) => route.access === "protected").length,
+      mixedRoutes: routes.filter((route) => route.access === "mixed").length,
+    },
+  } satisfies ApiMonitoringSnapshot;
+}
+
 export async function createApp(options: CreateAppOptions = {}): Promise<Express> {
   const app = express();
 
@@ -2235,6 +2931,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
   });
 
   app.get("/api/health", async (req, res) => {
+    if (shouldServeHealthPage(req)) {
+      res.redirect(302, "/health");
+      return;
+    }
+
+    const startedAt = Date.now();
     const missingRequiredEnvVars = getMissingRequiredEnvVars();
     const [databaseState, storageState] = await Promise.all([
       getDatabaseHealthState(),
@@ -2246,18 +2948,47 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
     const applicationStatus: HealthCheckStatus = publicOriginState.ok ? "pass" : "fail";
     const databaseStatus: HealthCheckStatus = databaseState.ok ? "pass" : "fail";
     const storageStatus: HealthCheckStatus = storageState.ok ? "pass" : "fail";
+    const nodeApiOk = requiredEnvOk && publicOriginState.ok && databaseState.ok && storageState.ok;
+    const nodeApiService: ApiServiceHealth = {
+      id: "node-api",
+      name: "Node API gateway",
+      runtime: "node",
+      access: "mixed",
+      endpoint: "/api/health",
+      status: nodeApiOk ? "pass" : "fail",
+      ok: nodeApiOk,
+      latencyMs: Date.now() - startedAt,
+      uptimeSeconds: Math.round(process.uptime()),
+      statusCode: nodeApiOk ? 200 : 503,
+      summary: nodeApiOk
+        ? "Node-backed API routes are healthy and serving their shared dependencies."
+        : "Node-backed API routes are degraded because one or more shared dependencies failed.",
+      ...(nodeApiOk
+        ? {}
+        : {
+            message:
+              publicOriginState.message ??
+              databaseState.message ??
+              storageState.errorMessage ??
+              "A shared dependency required by the Node API gateway is unhealthy.",
+          }),
+    };
+    const apiMonitoringSnapshot = await getApiMonitoringSnapshot({
+      nodeService: nodeApiService,
+    });
     const health: HealthDiagnostic = {
       status: getHealthStatus([
         configurationStatus,
         applicationStatus,
         databaseStatus,
         storageStatus,
+        apiMonitoringSnapshot.status,
       ]),
       timestamp: new Date().toISOString(),
       summary:
-        requiredEnvOk && publicOriginState.ok && databaseState.ok && storageState.ok
-          ? "All core platform checks passed."
-          : "One or more platform checks failed. Inspect the individual checks for details.",
+        requiredEnvOk && publicOriginState.ok && databaseState.ok && storageState.ok && apiMonitoringSnapshot.ok
+          ? "All core platform checks passed and the monitored API services are healthy."
+          : "One or more platform or API checks failed. Inspect the individual checks for details.",
       service: {
         name: "mt-invoices",
         environment: getEnvironmentName(),
@@ -2302,6 +3033,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
           ...(storageState.errorMessage ? { message: storageState.errorMessage } : {}),
         },
       },
+      api: apiMonitoringSnapshot,
     };
 
     res.status(health.status === "ok" ? 200 : 503).json(health);
