@@ -17,14 +17,6 @@
       "destination": "/api?__pathname=invoices/export/render"
     },
     {
-      "source": "/api/settings/:path*",
-      "destination": "/api?__pathname=settings/:path*"
-    },
-    {
-      "source": "/api/users/:path*",
-      "destination": "/api?__pathname=users/:path*"
-    },
-    {
       "source": "/api/:path*",
       "destination": "https://vvznmnxheqjvosnzkxkl.supabase.co/functions/v1/app-api?path=/api/:path*"
     },
